@@ -734,9 +734,20 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         # Run pi in non-interactive mode, cd into the repo, with the rendered prompt
         log_file = Path(tempfile.mktemp(suffix=".log", prefix=f"agent-{safe_id}-"))
 
+        # Load ZAI_API_KEY from pi auth store
+        zai_key = ""
+        auth_file = Path.home() / ".pi" / "agent" / "auth.json"
+        if auth_file.exists():
+            try:
+                auth_data = json.loads(auth_file.read_text())
+                zai_key = auth_data.get("zai", "")
+            except Exception:
+                pass
+
         cmd = (
             f"cd {local_path} && "
-            f"nohup pi -p --no-session"
+            f"ZAI_API_KEY={zai_key} GITHUB_TOKEN={os.environ.get('GITHUB_TOKEN', '')} "
+            f"nohup pi -p --no-session --provider zai --model glm-5-turbo"
             f" --append-system-prompt 'You are working on issue #{issue_number}: {title}. When done, open a PR that closes #{issue_number}. '"
             f" < {prompt_file}"
             f" > {log_file} 2>&1 &"
