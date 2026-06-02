@@ -429,6 +429,70 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         elif path == "/api/prompts":
             prompts = self._load_prompts()
             self._json_response(prompts)
+        elif path == "/api/agent-status":
+            params = self._parse_qs()
+            item_id = params.get("item_id")
+            if not item_id:
+                self._json_response({"error": "item_id required"}, 400)
+                return
+            # Find the item across all queue lists
+            q = load_queue_json()
+            item = None
+            for lst in ("pending", "in_progress", "completed", "failed"):
+                for i in q.get(lst, []):
+                    if i["id"] == item_id:
+                        item = i
+                        break
+                if item:
+                    break
+            if not item:
+                self._json_response({"error": "item not found"}, 404)
+                return
+            result = {
+                "item_id": item_id,
+                "status": "unknown",
+                "pid": item.get("agent_pid"),
+                "log_file": item.get("agent_log"),
+                "prompt": item.get("agent_prompt"),
+                "started_at": item.get("agent_started_at"),
+                "log_tail": None,
+                "linked_prs": [],
+            }
+            # Check if process is alive
+            pid = item.get("agent_pid")
+            if pid:
+                try:
+                    check = subprocess.run(["kill", "-0", str(pid)], capture_output=True, timeout=5)
+                    result["status"] = "running" if check.returncode == 0 else "exited"
+                except Exception:
+                    result["status"] = "unknown"
+            elif item.get("started_at"):
+                result["status"] = "exited"
+            # Read log tail
+            log_file = item.get("agent_log")
+            if log_file and Path(log_file).exists():
+                try:
+                    tail_bytes = 15000  # ~last 15KB
+                    with open(log_file, "rb") as f:
+                        f.seek(0, 2)
+                        size = f.tell()
+                        if size > tail_bytes:
+                            f.seek(size - tail_bytes)
+                            f.readline()  # skip partial first line
+                        result["log_tail"] = f.read().decode("utf-8", errors="replace")
+                except Exception as e:
+                    result["log_tail"] = f"Error reading log: {e}"
+            # Check for linked PRs on the GitHub issue
+            repo = item.get("repo")
+            issue_number = item.get("issue_number")
+            if repo and issue_number:
+                try:
+                    from queue import check_linked_prs
+                    prs = check_linked_prs(repo, issue_number)
+                    result["linked_prs"] = prs or []
+                except Exception:
+                    pass
+            self._json_response(result)
         elif path == "/api/sync":
             repo_filter = self._parse_qs().get("repo")
             from queue import sync_github_issues

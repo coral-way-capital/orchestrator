@@ -862,8 +862,40 @@
   .dispatch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .dispatch-desc { font-size: 0.7rem; color: var(--text-muted); margin: 0.5rem 0 0 0; }
 
-  .agent-info { display: flex; gap: 1rem; font-size: 0.8rem; color: var(--text-muted); flex-wrap: wrap; }
-  .agent-info span { background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px; }
+  .agent-info { display: flex; gap: 1rem; font-size: 0.8rem; color: var(--text-muted); flex-wrap: wrap; margin-bottom: 0.75rem; }
+  .agent-info span { background: var(--card-bg-hover); padding: 0.25rem 0.5rem; border-radius: 4px; }
+
+  .agent-prs { margin-bottom: 0.75rem; }
+  .agent-pr-link {
+    display: inline-block;
+    background: rgba(16,185,129,0.1);
+    color: #6ee7b7;
+    border: 1px solid rgba(16,185,129,0.2);
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    text-decoration: none;
+    margin-right: 0.5rem;
+  }
+  .agent-pr-link:hover { background: rgba(16,185,129,0.15); }
+
+  .log-controls { margin-bottom: 0.5rem; }
+  .log-autoscroll { font-size: 0.75rem; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: 0.35rem; }
+
+  .agent-log {
+    background: #000;
+    color: #c9d1d9;
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    line-height: 1.55;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    max-height: 350px;
+    overflow-y: auto;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .log-line { white-space: pre-wrap; word-break: break-all; min-height: 1em; }
+  .log-dim { color: #666; font-style: italic; }
 
   /* Repo Filter */
   .filter-bar {
@@ -1392,6 +1424,75 @@ function showToast(msg, type = '') {
   }
 }
 
+function AgentLogViewer({ item }) {
+  const [agentStatus, setAgentStatus] = useState(null);
+  const [logTail, setLogTail] = useState('');
+  const [autoScroll, setAutoScroll] = useState(true);
+  const logRef = useRef(null);
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const r = await fetch(API + '/api/agent-status?item_id=' + encodeURIComponent(item.id));
+      if (!r.ok) return;
+      const d = await r.json();
+      setAgentStatus(d);
+      if (d.log_tail !== null) setLogTail(d.log_tail);
+    } catch (e) {}
+  }, [item.id]);
+
+  useEffect(() => {
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 3000);
+    return () => clearInterval(interval);
+  }, [fetchStatus]);
+
+  useEffect(() => {
+    if (autoScroll && logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [logTail, autoScroll]);
+
+  const status = agentStatus?.status || 'loading';
+  const isRunning = status === 'running';
+  const linkedPRs = agentStatus?.linked_prs || [];
+
+  return html`
+    <h3 style="margin:0 0 0.75rem 0">
+      ${isRunning ? '\u{1F916} Agent Running' : status === 'exited' ? '\u2705 Agent Finished' : '\u23F3 Loading...'}
+      ${agentStatus?.pid && html`<span style="font-weight:normal;font-size:0.75rem;color:var(--text-muted);margin-left:0.5rem">PID ${agentStatus.pid}</span>`}
+    </h3>
+
+    <div class="agent-info">
+      ${agentStatus?.started_at && html`<span>Started ${timeAgo(agentStatus.started_at)}</span>`}
+      ${agentStatus?.prompt && html`<span>Prompt: ${agentStatus.prompt}</span>`}
+    </div>
+
+    ${linkedPRs.length > 0 && html`
+      <div class="agent-prs">
+        ${linkedPRs.map(pr => html`
+          <a key=${pr.pr_number} href="https://github.com/${item.repo}/pull/${pr.pr_number}" target="_blank" rel="noopener noreferrer" class="agent-pr-link">
+            PR #${pr.pr_number} ${pr.pr_title || ''}
+          </a>
+        `)}
+      </div>
+    `}
+
+    <div class="log-controls">
+      <label class="log-autoscroll">
+        <input type="checkbox" checked=${autoScroll} onChange=${e => setAutoScroll(e.target.checked)} />
+        Auto-scroll
+      </label>
+    </div>
+
+    <div class="agent-log" ref=${logRef}>
+      ${logTail
+        ? logTail.split('\n').map((line, i) => html`<div key=${i} class="log-line">${line}</div>`)
+        : html`<div class="log-line log-dim">Waiting for agent output...</div>`
+      }
+    </div>
+  `;
+}
+
 function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatching }) {
   if (!item) return null;
   const [selectedPrompt, setSelectedPrompt] = useState('default');
@@ -1472,12 +1573,7 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatchi
 
         ${item.agent_pid && html`
           <div class="modal-dispatch">
-            <h3>\u{1F916} Agent Running</h3>
-            <div class="agent-info">
-              <span>PID: ${item.agent_pid}</span>
-              <span>Started: ${timeAgo(item.agent_started_at)}</span>
-              <span>Prompt: ${item.agent_prompt || 'unknown'}</span>
-            </div>
+            <${AgentLogViewer} item=${item} />
           </div>
         `}
       </div>
