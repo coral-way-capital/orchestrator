@@ -315,6 +315,26 @@ def move_down(item_id):
     return False
 
 
+def move_to_bottom(item_id):
+    """Move a pending item to the very bottom of the queue."""
+    queue = load_queue()
+    for i, item in enumerate(queue["pending"]):
+        if item["id"] == item_id:
+            if i >= len(queue["pending"]) - 1:
+                print(f"ALREADY AT BOTTOM: {item_id}")
+                return False
+            queue["pending"].pop(i)
+            queue["pending"].append(item)
+            save_queue(queue)
+            log_event("issue.prioritized", item_id=item_id, repo=item.get("repo"),
+                      issue_number=item.get("issue_number"), title=item.get("title"),
+                      details={"action": "move_to_bottom"})
+            print(f"MOVED TO BOTTOM: {item_id}")
+            return True
+    print(f"NOT FOUND in pending: {item_id}")
+    return False
+
+
 def sync_github_issues(repo_full_name=None):
     """Fetch open issues from GitHub and enqueue any not already in queue.
     Skips issues that are already in pending, in_progress, or have open linked PRs.
@@ -428,6 +448,9 @@ if __name__ == "__main__":
     elif cmd == "move-down":
         item_id = sys.argv[2]
         move_down(item_id)
+    elif cmd == "move-to-bottom":
+        item_id = sys.argv[2]
+        move_to_bottom(item_id)
     elif cmd == "sync":
         repo = sys.argv[2] if len(sys.argv) > 2 else None
         results = sync_github_issues(repo)

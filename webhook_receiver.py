@@ -494,6 +494,16 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             from queue import move_down
             ok = move_down(item_id)
             self._json_response({"ok": ok, "item_id": item_id, "action": "move_down"})
+        elif path.startswith("/api/queue/move-to-bottom/"):
+            item_id = path[len("/api/queue/move-to-bottom/"):]
+            from queue import move_to_bottom
+            ok = move_to_bottom(item_id)
+            self._json_response({"ok": ok, "item_id": item_id, "action": "move_to_bottom"})
+        elif path.startswith("/api/queue/retry/"):
+            item_id = path[len("/api/queue/retry/"):]
+            from queue import retry
+            ok = retry(item_id)
+            self._json_response({"ok": ok, "item_id": item_id, "action": "retry"})
         elif path.startswith("/api/queue/remove/"):
             item_id = path[len("/api/queue/remove/"):]
             from queue import reset as queue_reset

@@ -1,0 +1,38 @@
+{
+  "nextId": 4,
+  "tasks": [
+    {
+      "id": "1",
+      "subject": "Add move_to_bottom to queue.py backend",
+      "description": "Add a move_to_bottom function that sends a pending item to the very end of the queue, regardless of its current position.",
+      "status": "completed",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1780413712686,
+      "updatedAt": 1780413774834
+    },
+    {
+      "id": "2",
+      "subject": "Add move-to-bottom API endpoint",
+      "description": "Add PATCH /api/queue/move-to-bottom/<id> route in webhook_receiver.py",
+      "status": "completed",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1780413724329,
+      "updatedAt": 1780413805704
+    },
+    {
+      "id": "3",
+      "subject": "Redesign dashboard: vertical kanban, author, issue links, send-to-bottom",
+      "description": "Redesign the dashboard: vertical kanban (In Progress top, Pending below, Failed, Completed bottom), show author prominently, add GitHub issue link, send-to-bottom button with visual feedback animation.",
+      "status": "completed",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1780413730888,
+      "updatedAt": 1780414013863
+    }
+  ]
+}

@@ -66,7 +66,7 @@
     --shadow-md:                0 4px 12px rgba(0,0,0,0.06);
   }
 
-  /* ═══ Dark Mode (opt-in) ═══ */
+  /* ═══ Dark Mode ═══ */
   [data-theme="dark"] {
     --bg:                       #09090b;
     --bg-nav:                   rgba(9,9,11,0.85);
@@ -252,14 +252,14 @@
   /* ═══ Content ═══ */
   .content {
     padding: 1.5rem 2rem;
-    max-width: 1400px;
+    max-width: 900px;
     margin: 0 auto;
   }
 
   /* ═══ Stats Bar ═══ */
   .stats-bar {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 0.75rem;
     margin-bottom: 1.5rem;
   }
@@ -267,7 +267,7 @@
     background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 1.25rem;
+    padding: 1rem;
     transition: border-color 0.3s, background 0.3s;
   }
   .stat-card:hover {
@@ -275,21 +275,21 @@
     background: var(--card-bg-hover);
   }
   .stat-label {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     text-transform: uppercase;
-    letter-spacing: 0.2em;
+    letter-spacing: 0.15em;
     color: var(--text-muted);
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.25rem;
   }
   .stat-value {
-    font-size: 1.75rem;
+    font-size: 1.5rem;
     font-weight: 700;
     letter-spacing: -0.03em;
   }
   .stat-sub {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     color: var(--text-dim);
-    margin-top: 0.2rem;
+    margin-top: 0.15rem;
   }
   .c-pending { color: var(--color-pending); }
   .c-progress { color: var(--color-progress); }
@@ -298,83 +298,251 @@
   .c-info { color: var(--color-info); }
   .c-accent { color: var(--accent); }
 
-  /* ═══ Kanban ═══ */
-  .kanban {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-  }
-  .kanban-col {
+  /* ═══ Vertical Kanban ═══ */
+  .v-kanban { display: flex; flex-direction: column; gap: 1.5rem; }
+
+  .v-kanban-section {
     background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 12px;
-    min-height: 300px;
+    overflow: hidden;
   }
-  .kanban-header {
+  .v-kanban-section.section-progress { border-left: 3px solid var(--color-progress); }
+  .v-kanban-section.section-pending { border-left: 3px solid var(--color-pending); }
+  .v-kanban-section.section-failed { border-left: 3px solid var(--color-fail); }
+  .v-kanban-section.section-completed { border-left: 3px solid var(--color-done); opacity: 0.7; }
+  .v-kanban-section.section-completed.collapsed .section-body { display: none; }
+
+  .section-header {
     padding: 0.875rem 1rem;
-    border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+  }
+  .section-header:hover { background: var(--card-bg-hover); }
+  .section-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     font-size: 0.8rem;
     font-weight: 600;
     letter-spacing: -0.01em;
   }
-  .kanban-count {
+  .section-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+  }
+  .section-progress .section-icon { background: rgba(202,138,4,0.1); color: var(--color-progress); }
+  .section-pending .section-icon { background: rgba(124,58,237,0.1); color: var(--color-pending); }
+  .section-failed .section-icon { background: rgba(220,38,38,0.1); color: var(--color-fail); }
+  .section-completed .section-icon { background: rgba(22,163,74,0.1); color: var(--color-done); }
+
+  .section-count {
     font-size: 0.65rem;
     padding: 0.15rem 0.5rem;
     border-radius: 999px;
-    background: var(--card-bg-accent);
-    color: var(--accent);
     font-weight: 600;
   }
-  .kanban-body { padding: 0.5rem; }
-  .kanban-card {
+  .section-progress .section-count { background: rgba(202,138,4,0.08); color: var(--color-progress); }
+  .section-pending .section-count { background: rgba(124,58,237,0.08); color: var(--color-pending); }
+  .section-failed .section-count { background: rgba(220,38,38,0.08); color: var(--color-fail); }
+  .section-completed .section-count { background: rgba(22,163,74,0.08); color: var(--color-done); }
+
+  .collapse-chevron {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    transition: transform 0.2s;
+  }
+  .collapsed .collapse-chevron { transform: rotate(-90deg); }
+
+  .section-body { padding: 0 0.5rem 0.5rem; }
+
+  /* ═══ Issue Card ═══ */
+  .issue-card {
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.75rem 0.875rem;
+    border-radius: 10px;
+    padding: 0.875rem 1rem;
     margin-bottom: 0.4rem;
-    font-size: 0.8rem;
-    transition: border-color 0.2s, background 0.2s;
-    cursor: default;
+    transition: all 0.2s ease;
+    position: relative;
   }
-  .kanban-card:hover {
+  .issue-card:hover {
     border-color: var(--border-accent);
     background: var(--card-bg-hover);
+    box-shadow: var(--shadow-sm);
   }
-  .card-repo {
+  .issue-card.card-moving {
+    animation: cardDrop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  @keyframes cardDrop {
+    0% { opacity: 0; transform: translateY(-12px) scale(0.97); }
+    60% { opacity: 1; transform: translateY(2px) scale(1.01); }
+    100% { transform: translateY(0) scale(1); }
+  }
+  .issue-card.card-sinking {
+    animation: cardSink 0.4s ease forwards;
+  }
+  @keyframes cardSink {
+    0% { opacity: 1; transform: translateY(0); }
+    50% { opacity: 0.3; transform: translateY(8px); background: rgba(220,38,38,0.05); }
+    100% { opacity: 0; transform: translateY(20px) scale(0.95); }
+  }
+  .issue-card.card-removed {
+    animation: cardRemove 0.35s ease forwards;
+  }
+  @keyframes cardRemove {
+    0% { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(0.9) translateX(20px); height: 0; padding: 0; margin: 0; overflow: hidden; }
+  }
+  .issue-card.card-prioritized {
+    animation: cardLift 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  @keyframes cardLift {
+    0% { opacity: 0; transform: translateY(12px) scale(0.97); }
+    60% { opacity: 1; transform: translateY(-2px) scale(1.01); }
+    100% { transform: translateY(0) scale(1); }
+  }
+
+  .card-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.3rem;
+  }
+  .card-repo-link {
     font-size: 0.65rem;
     color: var(--text-dim);
-    margin-bottom: 0.25rem;
     font-weight: 500;
+    text-decoration: none;
+    transition: color 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
   }
-  .card-title {
+  .card-repo-link:hover { color: var(--accent); }
+  .card-repo-link svg { width: 12px; height: 12px; }
+
+  .card-time {
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .card-title-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .card-title-link {
     color: var(--text);
+    text-decoration: none;
+    font-size: 0.85rem;
     line-height: 1.35;
     font-weight: 500;
+    flex: 1;
+    transition: color 0.15s;
   }
-  .card-meta {
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    margin-top: 0.4rem;
-    display: flex;
-    justify-content: space-between;
-  }
+  .card-title-link:hover { color: var(--accent); }
+
   .card-labels { display: flex; gap: 0.25rem; margin-top: 0.4rem; flex-wrap: wrap; }
   .label-tag {
-    font-size: 0.6rem;
-    padding: 0.1rem 0.45rem;
+    font-size: 0.58rem;
+    padding: 0.1rem 0.4rem;
     border-radius: 999px;
     background: var(--card-bg-accent);
     color: var(--accent);
     font-weight: 500;
   }
-  .empty-col {
+
+  .card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 0.5rem;
+  }
+  .card-author {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+  .card-author-avatar {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--gradient);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.5rem;
+    color: white;
+    font-weight: 700;
+  }
+
+  .card-actions {
+    display: flex;
+    gap: 0.3rem;
+  }
+  .card-action-btn {
+    font-size: 0.6rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    white-space: nowrap;
+  }
+  .card-action-btn:hover {
+    border-color: var(--border-accent);
+    color: var(--accent);
+    background: var(--card-bg-hover);
+  }
+  .card-action-btn:active {
+    transform: scale(0.95);
+  }
+  .card-action-btn.btn-danger:hover {
+    border-color: var(--color-fail);
+    color: var(--color-fail);
+    background: rgba(220,38,38,0.05);
+  }
+  .card-action-btn.btn-bottom:hover {
+    border-color: var(--color-info);
+    color: var(--color-info);
+    background: rgba(8,145,178,0.05);
+  }
+  .card-action-btn.btn-top:hover {
+    border-color: var(--color-progress);
+    color: var(--color-progress);
+    background: rgba(202,138,4,0.05);
+  }
+
+  .card-pr-info {
+    font-size: 0.65rem;
+    color: var(--color-done);
+    font-weight: 500;
+  }
+
+  .empty-section {
     color: var(--text-dim);
     font-size: 0.8rem;
     text-align: center;
-    padding: 3rem 1rem;
+    padding: 2rem 1rem;
   }
 
   /* ═══ Activity Timeline ═══ */
@@ -511,14 +679,12 @@
 
   /* ═══ Responsive ═══ */
   @media (max-width: 768px) {
-    .kanban { grid-template-columns: repeat(2, 1fr); }
     .metrics-grid { grid-template-columns: 1fr; }
     .header { padding: 0.875rem 1.5rem; }
     .tabs { padding: 0 1.5rem; }
     .content { padding: 1rem 1.5rem; }
   }
   @media (max-width: 480px) {
-    .kanban { grid-template-columns: 1fr; }
     .stats-bar { grid-template-columns: repeat(2, 1fr); }
     .header { padding: 0.75rem 1rem; }
     .tabs { padding: 0 1rem; }
@@ -568,33 +734,6 @@
   }
   .filter-select:hover { border-color: var(--border-accent); }
   .filter-count { font-size: 0.7rem; color: var(--text-dim); }
-
-  /* Priority Controls */
-  .card-actions {
-    display: flex;
-    gap: 0.25rem;
-    margin-top: 0.4rem;
-  }
-  .card-action-btn {
-    font-size: 0.6rem;
-    padding: 0.15rem 0.4rem;
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    background: var(--card-bg);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.15s;
-    font-family: inherit;
-  }
-  .card-action-btn:hover {
-    border-color: var(--border-accent);
-    color: var(--accent);
-    background: var(--card-bg-hover);
-  }
-  .card-action-btn.btn-danger:hover {
-    border-color: var(--color-fail);
-    color: var(--color-fail);
-  }
 
   /* Toast */
   .toast-container {
@@ -683,6 +822,17 @@ function shortRepo(repo) {
 function formatNum(n) {
   if (n === null || n === undefined) return '\u2014';
   return n.toLocaleString();
+}
+
+function authorInitial(author) {
+  if (!author) return '?';
+  return author.charAt(0).toUpperCase();
+}
+
+function githubIssueUrl(item) {
+  if (item.html_url) return item.html_url;
+  if (item.repo && item.issue_number) return `https://github.com/${item.repo}/issues/${item.issue_number}`;
+  return '#';
 }
 
 // ─── Theme Toggle ───
@@ -776,12 +926,12 @@ function StatsBar({ queue, stats }) {
   return html`
     <div class="stats-bar">
       <div class="stat-card">
-        <div class="stat-label">Pending</div>
-        <div class="stat-value c-pending">${formatNum(q.pending?.length)}</div>
-      </div>
-      <div class="stat-card">
         <div class="stat-label">In Progress</div>
         <div class="stat-value c-progress">${formatNum(q.in_progress?.length)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Pending</div>
+        <div class="stat-value c-pending">${formatNum(q.pending?.length)}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Completed</div>
@@ -804,49 +954,129 @@ function StatsBar({ queue, stats }) {
   `;
 }
 
-function KanbanView({ queue, onPrioritize, onMoveDown, onRemove }) {
+function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, onRetry, animClass }) {
+  const url = githubIssueUrl(item);
+  const showActions = sectionKey === 'pending';
+  const showRetry = sectionKey === 'failed';
+
+  return html`
+    <div class="issue-card ${animClass || ''}" key=${item.id}>
+      <div class="card-top-row">
+        <a class="card-repo-link" href=${url} target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          ${shortRepo(item.repo)}#${item.issue_number}
+        </a>
+        <span class="card-time">${timeAgo(item.enqueued_at)}</span>
+      </div>
+
+      <div class="card-title-row">
+        <a class="card-title-link" href=${url} target="_blank" rel="noopener noreferrer">
+          ${item.title || 'Untitled'}
+        </a>
+      </div>
+
+      ${(item.labels && item.labels.length > 0) && html`
+        <div class="card-labels">
+          ${item.labels.slice(0, 4).map(l => html`<span class="label-tag">${l}</span>`)}
+        </div>
+      `}
+
+      <div class="card-footer">
+        <div class="card-author">
+          <span class="card-author-avatar">${authorInitial(item.author)}</span>
+          <span>${item.author || 'unknown'}</span>
+        </div>
+
+        ${sectionKey === 'completed' && item.pr_number && html`
+          <span class="card-pr-info">PR #${item.pr_number}</span>
+        `}
+
+        ${sectionKey === 'failed' && item.error && html`
+          <span style="font-size:0.6rem;color:var(--color-fail);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.error}</span>
+        `}
+
+        <div class="card-actions">
+          ${showActions && html`
+            <button class="card-action-btn btn-top" onClick=${() => onPrioritize(item.id)} title="Move to top">\u2191 Top</button>
+            <button class="card-action-btn btn-bottom" onClick=${() => onSendToBottom(item.id)} title="Send to bottom">\u2193 Bottom</button>
+            <button class="card-action-btn btn-danger" onClick=${() => onRemove(item.id)} title="Remove">\u2717</button>
+          `}
+          ${showRetry && html`
+            <button class="card-action-btn btn-top" onClick=${() => onRetry(item.id)} title="Retry">\u21BB Retry</button>
+            <button class="card-action-btn btn-danger" onClick=${() => onRemove(item.id)} title="Remove">\u2717</button>
+          `}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function KanbanSection({ sectionKey, label, icon, items, collapsed, onToggleCollapse, onPrioritize, onSendToBottom, onRemove, onRetry, cardAnimClass }) {
+  return html`
+    <div class="v-kanban-section section-${sectionKey} ${collapsed ? 'collapsed' : ''}">
+      <div class="section-header" onClick=${onToggleCollapse}>
+        <div class="section-header-left">
+          <span class="section-icon">${icon}</span>
+          <span>${label}</span>
+          <span class="section-count">${items.length}</span>
+        </div>
+        <span class="collapse-chevron">\u25BC</span>
+      </div>
+      <div class="section-body">
+        ${items.length === 0 ?
+          html`<div class="empty-section">No items</div>` :
+          items.map(item => html`
+            <${IssueCard}
+              key=${item.id}
+              item=${item}
+              sectionKey=${sectionKey}
+              onPrioritize=${onPrioritize}
+              onSendToBottom=${onSendToBottom}
+              onRemove=${onRemove}
+              onRetry=${onRetry}
+              animClass=${cardAnimClass}
+            />
+          `)
+        }
+      </div>
+    </div>
+  `;
+}
+
+function VerticalKanban({ queue, onPrioritize, onSendToBottom, onRemove, onRetry }) {
+  const [collapsedSections, setCollapsedSections] = useState({ completed: true });
+  const [cardAnimClass, setCardAnimClass] = useState('');
+
   if (!queue) return html`<div class="loading">Loading queue...</div>`;
-  const cols = [
-    { key: 'pending', label: 'Pending', color: 'c-pending', icon: '\u2193' },
-    { key: 'in_progress', label: 'In Progress', color: 'c-progress', icon: '\u2192' },
-    { key: 'completed', label: 'Completed', color: 'c-done', icon: '\u2713' },
-    { key: 'failed', label: 'Failed', color: 'c-fail', icon: '\u2717' },
+
+  const toggleCollapse = (key) => {
+    setCollapsedSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const sections = [
+    { key: 'in_progress', label: 'In Progress', icon: '\u2192' },
+    { key: 'pending', label: 'Pending', icon: '\u25A3' },
+    { key: 'failed', label: 'Failed', icon: '\u2717' },
+    { key: 'completed', label: 'Completed', icon: '\u2713' },
   ];
 
   return html`
-    <div class="kanban">
-      ${cols.map(col => html`
-        <div class="kanban-col">
-          <div class="kanban-header">
-            <span>${col.icon} ${col.label}</span>
-            <span class="kanban-count">${queue[col.key]?.length || 0}</span>
-          </div>
-          <div class="kanban-body">
-            ${(queue[col.key] || []).length === 0 ?
-              html`<div class="empty-col">No items</div>` :
-              (queue[col.key] || []).slice(0, 20).map(item => html`
-                <div class="kanban-card">
-                  <div class="card-repo">${shortRepo(item.repo)}#${item.issue_number}</div>
-                  <div class="card-title">${item.title || 'Untitled'}</div>
-                  <div class="card-labels">
-                    ${(item.labels || []).slice(0, 3).map(l => html`<span class="label-tag">${l}</span>`)}
-                  </div>
-                  <div class="card-meta">
-                    <span>${col.key === 'completed' && item.pr_number ? 'PR #' + item.pr_number : timeAgo(item.enqueued_at)}</span>
-                    <span>${item.author || ''}</span>
-                  </div>
-                  ${col.key === 'pending' && html`
-                    <div class="card-actions">
-                      <button class="card-action-btn" onClick=${() => onPrioritize(item.id)} title="Move to top">\u2191 Top</button>
-                      <button class="card-action-btn" onClick=${() => onMoveDown(item.id)} title="Move down">\u2193 Down</button>
-                      <button class="card-action-btn btn-danger" onClick=${() => onRemove(item.id)} title="Remove">\u2717</button>
-                    </div>
-                  `}
-                </div>
-              `)
-            }
-          </div>
-        </div>
+    <div class="v-kanban">
+      ${sections.map(s => html`
+        <${KanbanSection}
+          key=${s.key}
+          sectionKey=${s.key}
+          label=${s.label}
+          icon=${s.icon}
+          items=${queue[s.key] || []}
+          collapsed=${collapsedSections[s.key]}
+          onToggleCollapse=${() => toggleCollapse(s.key)}
+          onPrioritize=${onPrioritize}
+          onSendToBottom=${onSendToBottom}
+          onRemove=${onRemove}
+          onRetry=${onRetry}
+          cardAnimClass=${cardAnimClass}
+        />
       `)}
     </div>
   `;
@@ -946,7 +1176,7 @@ function GuardsView({ stats }) {
         Guards fire when a rule or safety check activates. Showing triggers from the last 7 days.
       </div>
       ${guards.length === 0 ?
-        html`<div class="empty-col" style="padding:3rem">No guard triggers in the last 7 days</div>` :
+        html`<div class="empty-section" style="padding:3rem">No guard triggers in the last 7 days</div>` :
         guards.map(g => {
           const details = typeof g.details === 'string' ? JSON.parse(g.details || '{}') : (g.details || {});
           return html`
@@ -968,7 +1198,7 @@ function GuardsView({ stats }) {
 
 function TreeView({ data }) {
   if (!data) return html`<div class="loading">Loading decompose tree...</div>`;
-  if (data.length === 0) return html`<div class="empty-col" style="padding:3rem">No decomposition records yet</div>`;
+  if (data.length === 0) return html`<div class="empty-section" style="padding:3rem">No decomposition records yet</div>`;
 
   return html`
     <div class="tree">
@@ -1007,7 +1237,9 @@ function App() {
   const [repoFilter, setRepoFilter] = useState('all');
   const [syncing, setSyncing] = useState(false);
   const [toasts, setToasts] = useState([]);
+  const [animatingCards, setAnimatingCards] = useState({});
   _setToasts = setToasts;
+
   const queue = useFetch('/api/queue');
   const events = useFetch('/api/events?limit=50');
   const stats = useFetch('/api/stats');
@@ -1022,7 +1254,7 @@ function App() {
   };
 
   const counts = {
-    kanban: (filteredQueue?.pending?.length || 0) + (filteredQueue?.in_progress?.length || 0),
+    kanban: (filteredQueue?.pending?.length || 0) + (filteredQueue?.in_progress?.length || 0) + (filteredQueue?.failed?.length || 0),
     activity: events.data?.length || 0,
     guards: stats.data?.guard_triggers?.length || 0,
     tree: tree.data?.length || 0,
@@ -1043,29 +1275,57 @@ function App() {
     }
   }
 
+  function animateCard(id, animClass) {
+    setAnimatingCards(prev => ({ ...prev, [id]: animClass }));
+    setTimeout(() => setAnimatingCards(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    }), 600);
+  }
+
   async function prioritizeTop(itemId) {
+    animateCard(itemId, 'card-prioritized');
     try {
       await fetch(API + '/api/queue/prioritize/' + encodeURIComponent(itemId), { method: 'PATCH' });
-      showToast('Moved to top', 'success');
+      showToast('Moved to top \u2191', 'success');
       queue.refresh();
     } catch (e) {
       showToast('Failed: ' + e.message, 'error');
     }
   }
 
-  async function moveDown(itemId) {
-    try {
-      await fetch(API + '/api/queue/move-down/' + encodeURIComponent(itemId), { method: 'PATCH' });
-      queue.refresh();
-    } catch (e) {
-      showToast('Failed: ' + e.message, 'error');
-    }
+  async function sendToBottom(itemId) {
+    animateCard(itemId, 'card-sinking');
+    // Small delay so user sees the animation before the card moves
+    setTimeout(async () => {
+      try {
+        await fetch(API + '/api/queue/move-to-bottom/' + encodeURIComponent(itemId), { method: 'PATCH' });
+        showToast('Sent to bottom \u2193', 'success');
+        queue.refresh();
+      } catch (e) {
+        showToast('Failed: ' + e.message, 'error');
+      }
+    }, 350);
   }
 
   async function removeItem(itemId) {
+    animateCard(itemId, 'card-removed');
+    setTimeout(async () => {
+      try {
+        await fetch(API + '/api/queue/remove/' + encodeURIComponent(itemId), { method: 'PATCH' });
+        showToast('Removed from queue', 'success');
+        queue.refresh();
+      } catch (e) {
+        showToast('Failed: ' + e.message, 'error');
+      }
+    }, 350);
+  }
+
+  async function retryItem(itemId) {
     try {
-      await fetch(API + '/api/queue/remove/' + encodeURIComponent(itemId), { method: 'PATCH' });
-      showToast('Removed from queue', 'success');
+      await fetch(API + '/api/queue/retry/' + encodeURIComponent(itemId), { method: 'PATCH' });
+      showToast('Retrying...', 'success');
       queue.refresh();
     } catch (e) {
       showToast('Failed: ' + e.message, 'error');
@@ -1083,12 +1343,18 @@ function App() {
             <option value="all">All Repos</option>
             ${(repos.data || []).map(r => html`<option value=${r}>${r.split('/')[1]}</option>`)}
           </select>
-          <span class="filter-count">${filteredQueue ? (filteredQueue.pending?.length || 0) + (filteredQueue.in_progress?.length || 0) : 0} items</span>
+          <span class="filter-count">${filteredQueue ? (filteredQueue.pending?.length || 0) + (filteredQueue.in_progress?.length || 0) + (filteredQueue.failed?.length || 0) : 0} active items</span>
           <button class="sync-btn ${syncing ? 'syncing' : ''}" onClick=${syncGitHub} disabled=${syncing}>
             ${syncing ? '\u21BB Syncing...' : '\u21BB Sync GitHub'}
           </button>
         </div>
-        <${KanbanView} queue=${filteredQueue} onPrioritize=${prioritizeTop} onMoveDown=${moveDown} onRemove=${removeItem} />
+        <${VerticalKanban}
+          queue=${filteredQueue}
+          onPrioritize=${prioritizeTop}
+          onSendToBottom=${sendToBottom}
+          onRemove=${removeItem}
+          onRetry=${retryItem}
+        />
       `}
       ${tab === 'activity' && html`<${ActivityView} events=${events.data} />`}
       ${tab === 'metrics' && html`<${MetricsView} stats=${stats.data} />`}
