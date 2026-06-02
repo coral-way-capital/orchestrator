@@ -691,10 +691,28 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 item = i
                 break
         if not item:
-            # Also check in_progress (already dispatched)
+            # Check in_progress — allow re-dispatch if agent is not running
             for i in queue["in_progress"]:
                 if i["id"] == item_id:
-                    return {"error": "Already in progress", "item": i}, 409
+                    if i.get("agent_pid"):
+                        # Check if PID is still alive
+                        try:
+                            check = subprocess.run(["kill", "-0", str(i["agent_pid"])], capture_output=True, timeout=5)
+                            if check.returncode == 0:
+                                return {"error": "Agent still running", "item": i}, 409
+                        except Exception:
+                            pass
+                    # Agent exited or never started — move back to pending
+                    i["started_at"] = None
+                    i["agent_pid"] = None
+                    i["agent_log"] = None
+                    i["agent_prompt"] = None
+                    i["agent_started_at"] = None
+                    queue["in_progress"].remove(i)
+                    queue["pending"].insert(0, i)
+                    save_queue(queue)
+                    item = i
+                    break
             return {"error": f"Item {item_id} not found in pending"}, 404
 
         # Move to in_progress

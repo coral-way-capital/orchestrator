@@ -790,6 +790,13 @@
   }
   .modal-close:hover { color: var(--text); }
 
+  .modal-copy-link {
+    background: none; border: 1px solid var(--border); color: var(--text-muted);
+    font-size: 0.7rem; cursor: pointer; padding: 0.3rem 0.6rem;
+    border-radius: 6px; flex-shrink: 0; white-space: nowrap;
+  }
+  .modal-copy-link:hover { color: var(--text); border-color: var(--border-accent); }
+
   .modal-meta {
     display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
     padding: 0.75rem 1.5rem;
@@ -1518,6 +1525,11 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatchi
             <h2 class="modal-title">${issue?.title || item.title}</h2>
           </div>
           <button class="modal-close" onClick=${onClose}>\u2715</button>
+          <button class="modal-copy-link" onClick=${() => {
+            const url = window.location.origin + window.location.pathname + '#issue=' + encodeURIComponent(item.id);
+            navigator.clipboard.writeText(url).then(() => {});
+            const btn = document.activeElement; btn.textContent = '\u2713 Copied'; setTimeout(() => btn.textContent = '\u{1F517} Copy link', 1500);
+          }}>\u{1F517} Copy link</button>
         </div>
 
         <div class="modal-meta">
@@ -1595,6 +1607,27 @@ function App() {
   _setToasts = setToasts;
 
   const queue = useFetch('/api/queue');
+
+  // Deep linking: open issue from URL hash (#issue=repo/owner#123)
+  useEffect(() => {
+    function handleHash() {
+      const hash = window.location.hash.slice(1);
+      const params = new URLSearchParams(hash);
+      const issueId = params.get('issue');
+      if (issueId && !selectedItem) {
+        // Find item in queue data
+        const q = queue.data;
+        if (!q) return;
+        const all = [...(q.pending||[]), ...(q.in_progress||[]), ...(q.completed||[]), ...(q.failed||[])];
+        const item = all.find(i => i.id === issueId);
+        if (item) openIssueDetail(item);
+      }
+    }
+    // Check on load and on hash change
+    if (queue.data) handleHash();
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, [queue.data]);
   const events = useFetch('/api/events?limit=50');
   const stats = useFetch('/api/stats');
   const tree = useFetch('/api/decompose-tree');
@@ -1699,10 +1732,18 @@ function App() {
     }
   }
 
+  function closeModal() {
+    setSelectedItem(null);
+    setIssueDetail(null);
+    window.location.hash = '';
+  }
+
   async function openIssueDetail(item) {
     setSelectedItem(item);
     setIssueDetail(null);
     setIssueLoading(true);
+    // Set URL hash for deep linking
+    window.location.hash = `issue=${encodeURIComponent(item.id)}`;
     try {
       const r = await fetch(API + '/api/issue?repo=' + encodeURIComponent(item.repo) + '&number=' + item.issue_number);
       if (!r.ok) throw new Error(r.status);
@@ -1725,7 +1766,7 @@ function App() {
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || r.status);
       showToast(`Agent dispatched! PID ${d.pid}`, 'success');
-      setSelectedItem(null);
+      closeModal();
       queue.refresh();
     } catch (e) {
       showToast('Dispatch failed: ' + e.message, 'error');
@@ -1769,7 +1810,7 @@ function App() {
         item=${selectedItem}
         issue=${issueDetail}
         prompts=${prompts.data}
-        onClose=${() => setSelectedItem(null)}
+        onClose=${closeModal}
         onDispatch=${dispatchAgent}
         dispatching=${dispatching}
       />
