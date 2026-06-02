@@ -259,7 +259,7 @@ curl http://100.102.201.26:8646/api/prompts
 
 ## Conventions
 
-- **Minimal dependencies** — Python stdlib + PyYAML. `gh` CLI for GitHub API, `pi` for agent spawning.
+- **Minimal dependencies** — Python stdlib + PyYAML. `gh` CLI for GitHub API, `hermes` (Hermes agent venv) for agent spawning.
 - **Single-file frontend** — `dashboard/index.html` is a self-contained Preact SPA (ESM imports from esm.sh, no build step)
 - **Queue as JSON file** — `queue.json` is the source of truth, read/written on every operation. Not thread-safe by design (single-process, systemd-managed)
 - **Event sourcing** — `events.py` logs every state transition for metrics and audit
