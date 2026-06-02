@@ -123,6 +123,16 @@
     color: var(--text);
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    overflow-y: auto;
+  }
+
+  body.modal-open {
+    overflow: hidden;
+  }
+
+  #app {
+    position: relative;
+    min-height: 100vh;
   }
 
   /* ═══ Nav ═══ */
@@ -912,7 +922,8 @@
 
 <script type="module">
 import { h, render, Component } from 'https://esm.sh/preact@10.19.3';
-import { useState, useEffect, useCallback } from 'https://esm.sh/preact@10.19.3/hooks';
+import { useState, useEffect, useCallback, useRef } from 'https://esm.sh/preact@10.19.3/hooks';
+import { createPortal } from 'https://esm.sh/preact@10.19.3/compat';
 import htm from 'https://esm.sh/htm@3.1.1';
 
 const html = htm.bind(h);
@@ -1385,12 +1396,19 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatchi
   if (!item) return null;
   const [selectedPrompt, setSelectedPrompt] = useState('default');
 
+  // Lock body scroll when mounted
+  useEffect(() => {
+    document.body.classList.add('modal-open');
+    return () => document.body.classList.remove('modal-open');
+  }, []);
+
   const state = issue?.state || 'unknown';
   const labels = issue?.labels || item.labels || [];
   const body = issue?.body || item.body || '';
   const comments = issue?._comments || [];
 
-  return html`
+  return createPortal(
+    html`
     <div class="modal-overlay" onClick=${onClose}>
       <div class="modal" onClick=${e => e.stopPropagation()}>
         <div class="modal-header">
@@ -1464,7 +1482,8 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatchi
         `}
       </div>
     </div>
-  `;
+    `, document.body
+  );
 }
 
 function App() {

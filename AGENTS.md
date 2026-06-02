@@ -2,50 +2,79 @@
 
 ## What This Is
 
-An automated issue-to-PR pipeline for GitHub repositories owned by [Coral Way Capital (CWC)](https://github.com/coral-way-capital). When a GitHub issue is opened, a webhook enqueues it, a cron-based orchestrator dispatches Pi coding agents to resolve it, and the dashboard tracks everything in real time.
+A dashboard and orchestration layer for GitHub issues owned by [Coral Way Capital (CWC)](https://github.com/coral-way-capital). Issues arrive via webhook or manual GitHub sync, appear on a kanban board, and can be dispatched to autonomous Pi coding agents with customizable prompt templates. Agents implement the issue and open PRs.
 
-**Stack:** Python 3 (stdlib only — no pip dependencies), Preact + HTM SPA, SQLite, systemd.
+**Stack:** Python 3 (stdlib + PyYAML for frontmatter), Preact + HTM SPA, SQLite, systemd, Pi coding agent.
 
 ## Architecture
 
 ```
-GitHub Issue ──webhook──▶ webhook_receiver.py (port 8646)
-                                │
-                    ┌───────────┼───────────┐
-                    ▼           ▼           ▼
-              classify     enqueue()    log_event()
-              (S/M/L)      queue.py     events.py
-                    │
-          ┌─────────┴──────────┐
-          ▼                    ▼
-   Small/Medium           Large issue
-   → pending queue        → decompose queue → Hermes gateway → epic decomposition
-          │
-          ▼
-   orchestrator_check.py (cron) → dispatches Pi agents
-          │
-          ▼
-   Agent opens PR → complete() → moves to completed
+                          ┌─────────────────────────────────┐
+                          │     Mission Control Dashboard    │
+                          │   dashboard/index.html (SPA)     │
+                          │   kanban · issue detail · metrics │
+                          └──────────┬──────────────────────┘
+                                     │ REST API
+                          ┌──────────▼──────────────────────┐
+                          │    webhook_receiver.py :8646      │
+                          │   webhooks · API · static files   │
+                          └──┬─────┬──────┬──────────┬──────┘
+                             │     │      │          │
+                   ┌─────────┘     │      │          │
+                   ▼               ▼      ▼          ▼
+              queue.py       events.py   sync    prompts/
+              (queue CRUD)  (event log)  (inc.)  (templates)
+                   │
+         ┌─────────┼──────────┐
+         ▼         ▼          ▼
+   enqueue()   dispatch()   sync_github_issues()
+   classify    (pi -p)      (incremental)
+   (S/M/L)
+
+   dispatch() spawns Pi agent:
+   cd <repo> && pi -p --no-session --append-system-prompt '...' < prompt.md
 ```
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `webhook_receiver.py` | HTTP server (port 8646). Handles GitHub webhooks (POST), serves dashboard (GET), exposes REST API (GET/PATCH). Also forwards large issues to Hermes gateway for decomposition. |
-| `queue.py` | Queue CRUD. Manages `queue.json` with lists: `pending`, `in_progress`, `completed`, `failed`. Each item tracks repo, issue number, title, body, author, labels, html_url, timestamps, PR number. |
-| `events.py` | SQLite event log at `~/.hermes/issue-queue/events.db`. Structured log of all events (enqueue, claim, complete, fail, guard triggers, etc.). Powers dashboard metrics, timeline, and stats. |
-| `orchestrator_check.py` | Cron script. Reads queue, determines which issues to dispatch, outputs context for Pi agents. Max 2 concurrent workers, 1 per repo. |
-| `dashboard/index.html` | Single-file Preact SPA. Vertical kanban board, activity timeline, metrics, guards, decompose tree. Dark/light mode. |
+| `webhook_receiver.py` | HTTP server (port 8646). GitHub webhooks (POST), dashboard (GET), REST API (GET/PATCH/POST). Forwards large issues to Hermes gateway for decomposition. Spawns Pi agents on dispatch. |
+| `queue.py` | Queue CRUD + GitHub sync. Manages `queue.json` with lists: `pending`, `in_progress`, `completed`, `failed`. Incremental sync via `?since=` with per-repo timestamps. |
+| `events.py` | SQLite event log at `events.db`. Structured log of all events (enqueue, claim, complete, fail, dispatch, sync, guard triggers). Powers metrics, timeline, and stats. |
+| `orchestrator_check.py` | Cron script. Reads queue, determines which issues to dispatch, outputs context for agents. Max 2 concurrent workers, 1 per repo. |
+| `dashboard/index.html` | Single-file Preact SPA. Kanban board with clickable cards, issue detail modal, agent dispatch with prompt selector, activity timeline, metrics, guards, decompose tree. Dark/light mode. |
+| `prompts/` | Prompt template directory. Each `.md` file is a template with YAML frontmatter and `{{variable}}` placeholders. Drop new files to add prompt options. |
 | `cwc-issue-webhook.service` | systemd unit file for the webhook receiver. |
+
+### Prompt Templates
+
+| File | Name | What it does |
+|------|------|-------------|
+| `prompts/default.md` | Default — Implement & PR | Read issue, implement solution, open PR |
+| `prompts/explore-plan.md` | Explore & Plan | Read codebase, post implementation plan as GitHub comment |
+| `prompts/fix-bug.md` | Fix Bug | Reproduce → diagnose → fix → PR with test evidence |
+| `prompts/review-harden.md` | Review & Harden | Review code, find issues, push improvements |
+
+Add new templates by creating a `.md` file in `prompts/`:
+
+```markdown
+---
+name: My Custom Prompt
+description: What this prompt does
+---
+Your template with {{title}}, {{repo}}, {{local_path}},
+{{html_url}}, {{body}}, {{issue_number}} variables.
+```
 
 ## Runtime Environment
 
 - **Host:** `100.102.201.26` (Tailscale) — server name `maya`
 - **User:** `deploy`
 - **Working directory:** `/home/deploy/.hermes/issue-queue/`
-- **Port:** 8646
+- **Port:** 8646 (bound to Tailscale IP)
 - **Service:** `cwc-issue-webhook.service` (systemd, enabled, auto-restart)
+- **Agent:** `pi` (Pi coding agent, `/usr/local/bin/pi`)
 
 ### Data Files (on server, gitignored)
 
@@ -56,6 +85,14 @@ GitHub Issue ──webhook──▶ webhook_receiver.py (port 8646)
 | `~/.hermes/issue-queue/sync-state.json` | Per-repo sync timestamps (enables incremental sync) |
 | `~/.hermes/issue-queue/events.db` | SQLite event log |
 | `~/.hermes/issue-queue/webhook-secret` | HMAC secret shared with GitHub |
+| `~/.hermes/issue-queue/prompts/*.md` | Prompt templates (tracked in git) |
+
+### Environment Variables (systemd service)
+
+| Variable | Purpose |
+|----------|---------|
+| `PORT` | Server port (default 8646) |
+| `GITHUB_TOKEN` | GitHub PAT for `gh` CLI (used by sync, issue fetch, agent) |
 
 ## Queue Item Schema
 
@@ -73,9 +110,24 @@ GitHub Issue ──webhook──▶ webhook_receiver.py (port 8646)
   "started_at": null,
   "completed_at": null,
   "pr_number": null,
-  "error": null
+  "error": null,
+  "closed_via": null,
+  "agent_pid": null,
+  "agent_log": null,
+  "agent_prompt": null,
+  "agent_started_at": null
 }
 ```
+
+### Agent Fields
+
+| Field | Set when | Purpose |
+|-------|----------|---------|
+| `agent_pid` | Dispatch | Process ID of the `pi` background process |
+| `agent_log` | Dispatch | Path to the agent's log file |
+| `agent_prompt` | Dispatch | ID of the prompt template used |
+| `agent_started_at` | Dispatch | ISO timestamp when agent was spawned |
+| `closed_via` | Sync prune | Set to `"sync_prune"` when auto-closed by sync |
 
 ## API Endpoints
 
@@ -91,6 +143,8 @@ GitHub Issue ──webhook──▶ webhook_receiver.py (port 8646)
 | `/api/decompose-tree` | Parent→child tree from decomposition events |
 | `/api/repos` | Sorted list of all repos in the queue |
 | `/api/sync?repo=<repo>` | Incremental sync: add new open issues, prune closed ones. Returns per-repo breakdown |
+| `/api/issue?repo=X&number=N` | Full GitHub issue data + comments |
+| `/api/prompts` | List of available prompt templates |
 | `/api/health` | Health check with queue counts |
 | `/health` | Simple health check |
 
@@ -106,9 +160,28 @@ GitHub Issue ──webhook──▶ webhook_receiver.py (port 8646)
 
 ### POST
 
-| Path | Action |
-|------|--------|
-| `/` (GitHub webhook) | Receives `issues` events, classifies size, enqueues or routes to decomposition |
+| Path | Body | Action |
+|------|------|--------|
+| `/` | GitHub webhook payload | Receives `issues` events, classifies size, enqueues or routes to decomposition |
+| `/api/dispatch` | `{"item_id": "...", "prompt_id": "..."}` | Claim item, render prompt, spawn `pi -p` agent in background |
+
+### Sync Response Format
+
+`GET /api/sync` returns structured per-repo results:
+
+```json
+{
+  "repos": {
+    "coral-way-capital/audit-agent": {
+      "added": ["coral-way-capital/audit-agent#42"],
+      "closed": ["coral-way-capital/audit-agent#38"],
+      "unchanged": 5,
+      "errors": []
+    }
+  },
+  "totals": { "added": 1, "closed": 1, "unchanged": 5 }
+}
+```
 
 ## Issue Classification
 
@@ -121,6 +194,19 @@ Issues are classified as `small`, `medium`, or `large` based on body heuristics:
 
 **Large issues** → decompose queue → forwarded to Hermes gateway for epic decomposition into child issues.
 
+## GitHub Sync (Incremental)
+
+The sync mechanism uses per-repo timestamps stored in `sync-state.json`:
+
+| Scenario | GitHub API call | What happens |
+|----------|----------------|-------------|
+| **First sync** (no timestamp) | `?state=open&per_page=100` | Fetch all open issues. Queue items not in open set are individually verified and pruned if closed. |
+| **Subsequent sync** | `?state=all&per_page=100&since=<timestamp>` | Only issues updated since last sync. Typically 0-5 results. Open → enqueue, closed → prune. |
+
+Helper functions:
+- `verify_issue_closed(repo, number)` — Single-issue `gh api` state check
+- `auto_close_item(item_id, source)` — Move item from any list → `completed` with `closed_via` flag
+
 ## Guards (Recursion Prevention)
 
 - `epic-child` label → skip (child of decomposition)
@@ -131,18 +217,21 @@ Issues are classified as `small`, `medium`, or `large` based on body heuristics:
 
 ## Repo → Local Path Map
 
-Used by `orchestrator_check.py` to tell agents where code lives:
+Used by `orchestrator_check.py` and the dispatch API to tell agents where code lives:
 
 ```
-coral-way-capital/audit-agent   → /home/deploy/apps/audit-agent
-coral-way-capital/eckhart       → /home/deploy/apps/eckhart
-coral-way-capital/zenna-crm     → /home/deploy/apps/zenna-crm
-coral-way-capital/inmuebles     → /home/deploy/apps/inmuebles
-coral-way-capital/infrastructure→ /home/deploy/apps/infrastructure
-coral-way-capital/tasks-cli     → /home/deploy/apps/tasks-cli
-coral-way-capital/agent-configs → /home/deploy/apps/agent-configs
-coral-way-capital/sre           → /home/deploy/apps/sre
-coral-way-capital/website       → /var/www/coralwaycapital
+coral-way-capital/audit-agent    → /home/deploy/apps/audit-agent
+coral-way-capital/eckhart        → /home/deploy/apps/eckhart
+coral-way-capital/rsm-monitor    → /home/deploy/apps/eckhart
+coral-way-capital/zenna-crm      → /home/deploy/apps/zenna-crm
+coral-way-capital/inmuebles      → /home/deploy/apps/inmuebles
+coral-way-capital/infrastructure → /home/deploy/apps/infrastructure
+coral-way-capital/tasks-cli      → /home/deploy/apps/tasks-cli
+coral-way-capital/agent-configs  → /home/deploy/apps/agent-configs
+coral-way-capital/sre            → /home/deploy/apps/sre
+coral-way-capital/website        → /var/www/coralwaycapital
+coral-way-capital/client-status  → /home/deploy/apps/client-status
+coral-way-capital/diffusionZones → /home/deploy/apps/diffusionZones
 ```
 
 ## Deployment
@@ -159,13 +248,21 @@ sudo systemctl status cwc-issue-webhook
 
 # View logs
 sudo journalctl -u cwc-issue-webhook -f
+
+# Test sync manually
+python3 queue.py sync
+python3 queue.py sync coral-way-capital/audit-agent
+
+# Test prompts API
+curl http://100.102.201.26:8646/api/prompts
 ```
 
 ## Conventions
 
-- **Zero pip dependencies** — everything uses Python stdlib (`http.server`, `sqlite3`, `json`, `subprocess` for `gh` CLI)
+- **Minimal dependencies** — Python stdlib + PyYAML. `gh` CLI for GitHub API, `pi` for agent spawning.
 - **Single-file frontend** — `dashboard/index.html` is a self-contained Preact SPA (ESM imports from esm.sh, no build step)
 - **Queue as JSON file** — `queue.json` is the source of truth, read/written on every operation. Not thread-safe by design (single-process, systemd-managed)
 - **Event sourcing** — `events.py` logs every state transition for metrics and audit
 - **Webhook secret** — HMAC-SHA256 verification via `~/.hermes/issue-queue/webhook-secret`
 - **Max 100 completed items** retained in queue to prevent unbounded growth
+- **Prompts are files** — Drop/edit `.md` files in `prompts/` to customize agent behavior. No restart needed.
