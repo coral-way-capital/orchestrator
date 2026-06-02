@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.request import Request, urlopen
+from urllib.parse import unquote
 
 # Add parent to path for queue import
 BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -317,7 +318,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         # Normalize path (strip query string for routing)
-        path = self.path.split("?")[0]
+        path = unquote(self.path.split("?")[0])
 
         # API routes
         if path == "/api/queue":
@@ -341,6 +342,15 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             self._json_response(events)
         elif path == "/api/decompose-tree":
             self._json_response(get_decompose_tree())
+        elif path == "/api/repos":
+            q = load_queue_json()
+            repos = sorted(set(x["repo"] for x in q["pending"] + q["in_progress"] + q["completed"] + q["failed"]))
+            self._json_response(repos)
+        elif path == "/api/sync":
+            repo_filter = self._parse_qs().get("repo")
+            from queue import sync_github_issues
+            results = sync_github_issues(repo_filter)
+            self._json_response({"synced": results, "count": len(results)})
         elif path == "/api/health":
             dq = load_decompose_queue()
             q = load_queue_json()
@@ -463,6 +473,35 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         self.end_headers()
         with open(filepath, "rb") as f:
             self.wfile.write(f.read())
+
+    def do_PATCH(self):
+        """Handle prioritization: PATCH /api/queue/prioritize/<id> or PATCH /api/queue/move-down/<id>"""
+        path = unquote(self.path.split("?")[0])
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            payload = json.loads(raw_body) if raw_body else {}
+        except Exception:
+            payload = {}
+
+        if path.startswith("/api/queue/prioritize/"):
+            item_id = path[len("/api/queue/prioritize/"):]
+            from queue import prioritize_top
+            ok = prioritize_top(item_id)
+            self._json_response({"ok": ok, "item_id": item_id, "action": "prioritize_top"})
+        elif path.startswith("/api/queue/move-down/"):
+            item_id = path[len("/api/queue/move-down/"):]
+            from queue import move_down
+            ok = move_down(item_id)
+            self._json_response({"ok": ok, "item_id": item_id, "action": "move_down"})
+        elif path.startswith("/api/queue/remove/"):
+            item_id = path[len("/api/queue/remove/"):]
+            from queue import reset as queue_reset
+            ok = queue_reset(item_id)
+            self._json_response({"ok": ok, "item_id": item_id, "action": "remove"})
+        else:
+            self.send_response(404)
+            self.end_headers()
 
     def log_message(self, format, *args):
         print(f"[mission-control] {args[0]}")

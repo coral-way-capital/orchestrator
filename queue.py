@@ -279,6 +279,109 @@ def reset(item_id):
     return False
 
 
+def prioritize_top(item_id):
+    """Move a pending item to the top of the queue (position 0)."""
+    queue = load_queue()
+    for i, item in enumerate(queue["pending"]):
+        if item["id"] == item_id:
+            queue["pending"].remove(item)
+            queue["pending"].insert(0, item)
+            save_queue(queue)
+            log_event("issue.prioritized", item_id=item_id, repo=item.get("repo"),
+                      issue_number=item.get("issue_number"), title=item.get("title"),
+                      details={"action": "prioritize_top"})
+            print(f"PRIORITIZED TOP: {item_id}")
+            return True
+    print(f"NOT FOUND in pending: {item_id}")
+    return False
+
+
+def move_down(item_id):
+    """Move a pending item down one position in the queue."""
+    queue = load_queue()
+    for i, item in enumerate(queue["pending"]):
+        if item["id"] == item_id:
+            if i >= len(queue["pending"]) - 1:
+                print(f"ALREADY AT BOTTOM: {item_id}")
+                return False
+            queue["pending"][i], queue["pending"][i + 1] = queue["pending"][i + 1], queue["pending"][i]
+            save_queue(queue)
+            log_event("issue.prioritized", item_id=item_id, repo=item.get("repo"),
+                      issue_number=item.get("issue_number"), title=item.get("title"),
+                      details={"action": "move_down"})
+            print(f"MOVED DOWN: {item_id}")
+            return True
+    print(f"NOT FOUND in pending: {item_id}")
+    return False
+
+
+def sync_github_issues(repo_full_name=None):
+    """Fetch open issues from GitHub and enqueue any not already in queue.
+    Skips issues that are already in pending, in_progress, or have open linked PRs.
+    Returns list of newly enqueued item IDs."""
+    import subprocess
+    queue = load_queue()
+    existing_ids = set(x["id"] for x in queue["pending"] + queue["in_progress"])
+    done_ids = set(x["id"] for x in queue["completed"] + queue["failed"])
+
+    if repo_full_name:
+        repos = [repo_full_name]
+    else:
+        repos = list(set(x["repo"] for x in queue["pending"] + queue["in_progress"] + queue["completed"] + queue["failed"]))
+
+    newly_enqueued = []
+    for repo in repos:
+        try:
+            result = subprocess.run(
+                ["gh", "api", f"repos/{repo}/issues",
+                 "--jq", ".[] | select(.pull_request == null) | {number, title, body, html_url, user: .user.login, labels: [.labels[].name]}"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                print(f"ERROR fetching {repo}: {result.stderr[:100]}")
+                continue
+
+            issues = []
+            for line in result.stdout.strip().split("\\n"):
+                line = line.strip()
+                if line:
+                    try:
+                        issues.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+
+            for issue in issues:
+                item_id = f"{repo}#{issue['number']}"
+                if item_id in existing_ids or item_id in done_ids:
+                    continue
+
+                labels = issue.get("labels", [])
+                skip_labels = {"question", "discussion", "wontfix", "duplicate", "invalid", "docs"}
+                if any(l.lower() in skip_labels for l in labels):
+                    continue
+
+                enqueued = enqueue(
+                    repo=repo,
+                    issue_number=issue["number"],
+                    title=issue.get("title", ""),
+                    body=issue.get("body", "") or "",
+                    author=issue.get("user", ""),
+                    labels=labels,
+                    html_url=issue.get("html_url", ""),
+                )
+                if enqueued:
+                    newly_enqueued.append(item_id)
+                    existing_ids.add(item_id)
+                    log_event("issue.synced", item_id=item_id, repo=repo,
+                              issue_number=issue["number"], title=issue.get("title", ""),
+                              details={"source": "github_sync", "labels": labels})
+        except Exception as e:
+            print(f"ERROR syncing {repo}: {e}")
+
+    print(f"SYNC COMPLETE: {len(newly_enqueued)} newly enqueued")
+    return newly_enqueued
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: queue.py <status|enqueue|next|complete|fail|retry|reset> ...")
@@ -319,6 +422,16 @@ if __name__ == "__main__":
     elif cmd == "reset":
         item_id = sys.argv[2]
         reset(item_id)
+    elif cmd == "prioritize":
+        item_id = sys.argv[2]
+        prioritize_top(item_id)
+    elif cmd == "move-down":
+        item_id = sys.argv[2]
+        move_down(item_id)
+    elif cmd == "sync":
+        repo = sys.argv[2] if len(sys.argv) > 2 else None
+        results = sync_github_issues(repo)
+        print(json.dumps(results))
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)

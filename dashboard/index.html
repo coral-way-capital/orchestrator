@@ -524,6 +524,105 @@
     .tabs { padding: 0 1rem; }
     .content { padding: 0.75rem 1rem; }
   }
+
+  /* Sync Button */
+  .sync-btn {
+    font-size: 0.75rem;
+    padding: 0.4rem 0.8rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-accent);
+    background: var(--card-bg-accent);
+    color: var(--accent);
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .sync-btn:hover {
+    background: var(--card-bg-accent-hover);
+    border-color: var(--border-accent-strong);
+  }
+  .sync-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .sync-btn.syncing { animation: pulse 1s ease infinite; }
+
+  /* Repo Filter */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+  .filter-select {
+    font-size: 0.8rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    appearance: auto;
+  }
+  .filter-select:hover { border-color: var(--border-accent); }
+  .filter-count { font-size: 0.7rem; color: var(--text-dim); }
+
+  /* Priority Controls */
+  .card-actions {
+    display: flex;
+    gap: 0.25rem;
+    margin-top: 0.4rem;
+  }
+  .card-action-btn {
+    font-size: 0.6rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .card-action-btn:hover {
+    border-color: var(--border-accent);
+    color: var(--accent);
+    background: var(--card-bg-hover);
+  }
+  .card-action-btn.btn-danger:hover {
+    border-color: var(--color-fail);
+    color: var(--color-fail);
+  }
+
+  /* Toast */
+  .toast-container {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .toast {
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+    color: var(--text);
+    animation: slideIn 0.2s ease;
+  }
+  .toast.success { border-color: var(--color-done); color: var(--color-done); }
+  .toast.error { border-color: var(--color-fail); color: var(--color-fail); }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(0.5rem); }
+    to { opacity: 1; transform: translateY(0); }
+  }
 </style>
 </head>
 <body>
@@ -705,7 +804,7 @@ function StatsBar({ queue, stats }) {
   `;
 }
 
-function KanbanView({ queue }) {
+function KanbanView({ queue, onPrioritize, onMoveDown, onRemove }) {
   if (!queue) return html`<div class="loading">Loading queue...</div>`;
   const cols = [
     { key: 'pending', label: 'Pending', color: 'c-pending', icon: '\u2193' },
@@ -736,6 +835,13 @@ function KanbanView({ queue }) {
                     <span>${col.key === 'completed' && item.pr_number ? 'PR #' + item.pr_number : timeAgo(item.enqueued_at)}</span>
                     <span>${item.author || ''}</span>
                   </div>
+                  ${col.key === 'pending' && html`
+                    <div class="card-actions">
+                      <button class="card-action-btn" onClick=${() => onPrioritize(item.id)} title="Move to top">\u2191 Top</button>
+                      <button class="card-action-btn" onClick=${() => onMoveDown(item.id)} title="Move down">\u2193 Down</button>
+                      <button class="card-action-btn btn-danger" onClick=${() => onRemove(item.id)} title="Remove">\u2717</button>
+                    </div>
+                  `}
                 </div>
               `)
             }
@@ -887,30 +993,110 @@ function TreeView({ data }) {
 
 // ─── Main App ───
 
+// Toast system
+let _setToasts = null;
+function showToast(msg, type = '') {
+  if (_setToasts) {
+    _setToasts(prev => [...prev, { msg, type, id: Date.now() }]);
+    setTimeout(() => _setToasts(prev => prev.slice(1)), 3000);
+  }
+}
+
 function App() {
   const [tab, setTab] = useState('kanban');
+  const [repoFilter, setRepoFilter] = useState('all');
+  const [syncing, setSyncing] = useState(false);
+  const [toasts, setToasts] = useState([]);
+  _setToasts = setToasts;
   const queue = useFetch('/api/queue');
   const events = useFetch('/api/events?limit=50');
   const stats = useFetch('/api/stats');
   const tree = useFetch('/api/decompose-tree');
+  const repos = useFetch('/api/repos');
+
+  const filteredQueue = repoFilter === 'all' ? queue.data : {
+    pending: (queue.data?.pending || []).filter(i => i.repo === repoFilter),
+    in_progress: (queue.data?.in_progress || []).filter(i => i.repo === repoFilter),
+    completed: (queue.data?.completed || []).filter(i => i.repo === repoFilter),
+    failed: (queue.data?.failed || []).filter(i => i.repo === repoFilter),
+  };
 
   const counts = {
-    kanban: queue.data ? (queue.data.pending?.length || 0) + (queue.data.in_progress?.length || 0) : 0,
+    kanban: (filteredQueue?.pending?.length || 0) + (filteredQueue?.in_progress?.length || 0),
     activity: events.data?.length || 0,
     guards: stats.data?.guard_triggers?.length || 0,
     tree: tree.data?.length || 0,
   };
+
+  async function syncGitHub() {
+    setSyncing(true);
+    try {
+      const params = repoFilter !== 'all' ? `?repo=${encodeURIComponent(repoFilter)}` : '';
+      const r = await fetch(API + '/api/sync' + params);
+      const d = await r.json();
+      showToast(`Synced ${d.count} new issues from GitHub`, 'success');
+      queue.refresh();
+    } catch (e) {
+      showToast('Sync failed: ' + e.message, 'error');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function prioritizeTop(itemId) {
+    try {
+      await fetch(API + '/api/queue/prioritize/' + encodeURIComponent(itemId), { method: 'PATCH' });
+      showToast('Moved to top', 'success');
+      queue.refresh();
+    } catch (e) {
+      showToast('Failed: ' + e.message, 'error');
+    }
+  }
+
+  async function moveDown(itemId) {
+    try {
+      await fetch(API + '/api/queue/move-down/' + encodeURIComponent(itemId), { method: 'PATCH' });
+      queue.refresh();
+    } catch (e) {
+      showToast('Failed: ' + e.message, 'error');
+    }
+  }
+
+  async function removeItem(itemId) {
+    try {
+      await fetch(API + '/api/queue/remove/' + encodeURIComponent(itemId), { method: 'PATCH' });
+      showToast('Removed from queue', 'success');
+      queue.refresh();
+    } catch (e) {
+      showToast('Failed: ' + e.message, 'error');
+    }
+  }
 
   return html`
     <${Header} queue=${queue.data} />
     <${TabBar} active=${tab} onSwitch=${setTab} counts=${counts} />
     <div class="content">
       <${StatsBar} queue=${queue.data} stats=${stats.data} />
-      ${tab === 'kanban' && html`<${KanbanView} queue=${queue.data} />`}
+      ${tab === 'kanban' && html`
+        <div class="filter-bar">
+          <select class="filter-select" value=${repoFilter} onChange=${e => setRepoFilter(e.target.value)}>
+            <option value="all">All Repos</option>
+            ${(repos.data || []).map(r => html`<option value=${r}>${r.split('/')[1]}</option>`)}
+          </select>
+          <span class="filter-count">${filteredQueue ? (filteredQueue.pending?.length || 0) + (filteredQueue.in_progress?.length || 0) : 0} items</span>
+          <button class="sync-btn ${syncing ? 'syncing' : ''}" onClick=${syncGitHub} disabled=${syncing}>
+            ${syncing ? '\u21BB Syncing...' : '\u21BB Sync GitHub'}
+          </button>
+        </div>
+        <${KanbanView} queue=${filteredQueue} onPrioritize=${prioritizeTop} onMoveDown=${moveDown} onRemove=${removeItem} />
+      `}
       ${tab === 'activity' && html`<${ActivityView} events=${events.data} />`}
       ${tab === 'metrics' && html`<${MetricsView} stats=${stats.data} />`}
       ${tab === 'guards' && html`<${GuardsView} stats=${stats.data} />`}
       ${tab === 'tree' && html`<${TreeView} data=${tree.data} />`}
+    </div>
+    <div class="toast-container">
+      ${toasts.map(t => html`<div key=${t.id} class="toast ${t.type}">${t.msg}</div>`)}
     </div>
   `;
 }
