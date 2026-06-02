@@ -880,48 +880,63 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         actions = []
         project_root = Path(cwd)
 
+        # Ensure bun is in PATH
+        env = os.environ.copy()
+        bun_bin = str(Path.home() / ".bun" / "bin")
+        local_bin = str(Path.home() / ".local" / "bin")
+        env["PATH"] = f"{bun_bin}:{local_bin}:{env.get('PATH', '/usr/bin:/bin')}"
+
         # Detect tools and run auto-fix
         # 1. Biome (bun projects)
         if (project_root / "biome.json").exists() or (project_root / "biome.jsonc").exists():
-            # Run biome check --write (auto-fix)
-            r = subprocess.run(
-                ["bun", "run", "lint", "--", "--write"],
-                capture_output=True, text=True, cwd=cwd, timeout=30
-            )
-            if r.returncode == 0:
-                actions.append("biome: auto-fixed")
-            else:
-                # Try direct biome
-                r2 = subprocess.run(
-                    ["npx", "biome", "check", "--write", "src/"],
-                    capture_output=True, text=True, cwd=cwd, timeout=30
+            try:
+                r = subprocess.run(
+                    ["bun", "run", "lint", "--", "--write"],
+                    capture_output=True, text=True, cwd=cwd, timeout=30, env=env
                 )
-                if r2.returncode == 0:
-                    actions.append("biome: auto-fixed (direct)")
+                if r.returncode == 0:
+                    actions.append("biome: auto-fixed")
                 else:
-                    actions.append(f"biome: some errors remain — {r2.stdout[:100]}")
+                    actions.append(f"biome: errors remain — {r.stdout[:100]}")
+            except FileNotFoundError:
+                try:
+                    r = subprocess.run(
+                        ["npx", "biome", "check", "--write", "src/"],
+                        capture_output=True, text=True, cwd=cwd, timeout=30, env=env
+                    )
+                    if r.returncode == 0:
+                        actions.append("biome: auto-fixed (npx)")
+                    else:
+                        actions.append(f"biome: errors remain — {r.stdout[:100]}")
+                except FileNotFoundError:
+                    actions.append("biome: skipped (no tooling found)")
 
         # 2. ESLint
         elif (project_root / ".eslintrc").exists() or (project_root / ".eslintrc.json").exists() or (project_root / ".eslintrc.js").exists():
-            r = subprocess.run(
-                ["npx", "eslint", "--fix", "src/"],
-                capture_output=True, text=True, cwd=cwd, timeout=30
-            )
-            actions.append("eslint: auto-fixed" if r.returncode == 0 else f"eslint: some errors remain")
+            try:
+                r = subprocess.run(
+                    ["npx", "eslint", "--fix", "src/"],
+                    capture_output=True, text=True, cwd=cwd, timeout=30, env=env
+                )
+                actions.append("eslint: auto-fixed" if r.returncode == 0 else "eslint: some errors remain")
+            except FileNotFoundError:
+                actions.append("eslint: skipped (npx not found)")
 
         # 3. TypeScript type check (informational — can't auto-fix, but log it)
         tsconfig = (project_root / "tsconfig.json").exists()
         if tsconfig:
-            r = subprocess.run(
-                ["npx", "tsc", "--noEmit"],
-                capture_output=True, text=True, cwd=cwd, timeout=60
-            )
-            if r.returncode == 0:
-                actions.append("tsc: clean")
-            else:
-                # Count errors, report but don't block
-                err_count = r.stdout.count("error TS")
-                actions.append(f"tsc: {err_count} errors (may be pre-existing)")
+            try:
+                r = subprocess.run(
+                    ["npx", "tsc", "--noEmit"],
+                    capture_output=True, text=True, cwd=cwd, timeout=60, env=env
+                )
+                if r.returncode == 0:
+                    actions.append("tsc: clean")
+                else:
+                    err_count = r.stdout.count("error TS")
+                    actions.append(f"tsc: {err_count} errors (may be pre-existing)")
+            except FileNotFoundError:
+                actions.append("tsc: skipped (npx not found)")
 
         # Stage any auto-fix changes
         if actions:
