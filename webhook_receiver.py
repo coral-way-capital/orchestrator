@@ -746,13 +746,14 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 pass
 
         cmd = (
+            "bash -c '"
             f"cd {local_path} && "
             f"ZAI_API_KEY={zai_key} GITHUB_TOKEN={os.environ.get('GITHUB_TOKEN', '')} "
-            f"nohup pi -p --no-session --provider zai --model glm-5-turbo"
+            f"cat {prompt_file} | pi -p --no-session --provider zai --model glm-5-turbo"
             f" --append-system-prompt 'You are working on issue #{issue_number}: {title}. When done, open a PR that closes #{issue_number}. '"
-            f" < {prompt_file}"
             f" > {log_file} 2>&1 &"
-            f" echo $!"
+            "echo $!"
+            "'"
         )
 
         try:
