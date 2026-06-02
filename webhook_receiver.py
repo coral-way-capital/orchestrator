@@ -725,35 +725,24 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                   issue_number=issue_number, title=title,
                   details={"source": "manual_dispatch", "prompt": prompt_id})
 
-        # Write prompt to temp file so pi can read it
+        # Write prompt to temp file so hermes can read it
         import tempfile
         safe_id = item_id.replace("/", "_").replace("#", "-")
         prompt_file = Path(tempfile.mktemp(suffix=".md", prefix=f"dispatch-{safe_id}-"))
         prompt_file.write_text(rendered)
 
-        # Build the pi command
-        # Run pi in non-interactive mode, cd into the repo, with the rendered prompt
+        # Build the hermes command
+        # Use hermes chat -q (non-interactive) with hermes venv
+        hermes_bin = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "hermes"
         log_file = Path(tempfile.mktemp(suffix=".log", prefix=f"agent-{safe_id}-"))
 
-        # Load ZAI_API_KEY from pi auth store
-        zai_key = ""
-        auth_file = Path.home() / ".pi" / "agent" / "auth.json"
-        if auth_file.exists():
-            try:
-                auth_data = json.loads(auth_file.read_text())
-                zai_key = auth_data.get("zai", "")
-            except Exception:
-                pass
-
+        # Read prompt from file to avoid shell quoting issues
         cmd = (
-            "bash -c '"
             f"cd {local_path} && "
-            f"ZAI_API_KEY={zai_key} GITHUB_TOKEN={os.environ.get('GITHUB_TOKEN', '')} "
-            f"cat {prompt_file} | pi -p --no-session --provider zai --model glm-5-turbo"
-            f" --append-system-prompt 'You are working on issue #{issue_number}: {title}. When done, open a PR that closes #{issue_number}. '"
+            f"GITHUB_TOKEN={os.environ.get('GITHUB_TOKEN', '')} "
+            f"nohup {hermes_bin} chat -q \"$(cat {prompt_file})\" -Q"
             f" > {log_file} 2>&1 &"
-            "echo $!"
-            "'"
+            f" echo $!"
         )
 
         try:
