@@ -1,4 +1,42 @@
 {
-  "nextId": 6,
-  "tasks": []
+  "nextId": 9,
+  "tasks": [
+    {
+      "id": "6",
+      "subject": "Fix re-dispatch for completed/failed items",
+      "description": "The dispatch endpoint only recovers in_progress items. Need to allow re-dispatching from completed/failed states too. Reset agent fields and move to pending before dispatching.",
+      "status": "completed",
+      "metadata": {},
+      "blocks": [
+        "7"
+      ],
+      "blockedBy": [],
+      "createdAt": 1780431424318,
+      "updatedAt": 1780431577365
+    },
+    {
+      "id": "7",
+      "subject": "Auto-detect agent completion and move card",
+      "description": "Agent finished (posted GH comment) but item stayed in_progress. Need auto-completion detection — either poll agent-status and auto-move to completed, or check in the dispatch endpoint.",
+      "status": "completed",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [
+        "6"
+      ],
+      "createdAt": 1780431432614,
+      "updatedAt": 1780431592360
+    },
+    {
+      "id": "8",
+      "subject": "Add dashboard filtering and pagination",
+      "description": "Add filter tabs (All / Pending / In Progress / Completed / Failed) to dashboard. Completed tab should filter to last 7 days by default. Add pagination when queue has many items (e.g. 20 per page).",
+      "status": "completed",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1780431443437,
+      "updatedAt": 1780431924605
+    }
+  ]
 }

@@ -908,9 +908,39 @@
   .filter-bar {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    justify-content: space-between;
     margin-bottom: 1rem;
     flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .status-tabs {
+    display: flex;
+    gap: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .status-tab {
+    font-size: 0.75rem;
+    padding: 0.4rem 0.85rem;
+    border: none;
+    background: var(--bg);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .status-tab:not(:last-child) { border-right: 1px solid var(--border); }
+  .status-tab:hover { color: var(--text); background: var(--card-bg); }
+  .status-tab.active {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  .filter-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
   .filter-select {
     font-size: 0.8rem;
@@ -924,7 +954,32 @@
     appearance: auto;
   }
   .filter-select:hover { border-color: var(--border-accent); }
-  .filter-count { font-size: 0.7rem; color: var(--text-dim); }
+
+  /* Pagination */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--border);
+    margin: 0.5rem 0;
+  }
+  .page-btn {
+    font-size: 0.75rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .page-btn:hover:not(:disabled) { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .page-btn:disabled { opacity: 0.4; cursor: default; }
+  .page-info { font-size: 0.75rem; color: var(--text-muted); }
+  .page-total { opacity: 0.7; }
 
   /* Toast */
   .toast-container {
@@ -1150,10 +1205,10 @@ function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, o
   const url = githubIssueUrl(item);
   const showActions = sectionKey === 'pending';
   const showRetry = sectionKey === 'failed';
-  const showDispatch = sectionKey === 'pending' || sectionKey === 'in_progress';
+  const showRerun = sectionKey === 'completed' || sectionKey === 'failed';
 
   return html`
-    <div class="issue-card ${animClass || ''} ${showDispatch ? 'clickable' : ''}" key=${item.id} onClick=${showDispatch ? () => onClick(item) : undefined}>
+    <div class="issue-card ${animClass || ''} clickable" key=${item.id} onClick=${() => onClick(item)}>
       <div class="card-top-row">
         <a class="card-repo-link" href=${url} target="_blank" rel="noopener noreferrer" onClick=${e => e.stopPropagation()}>
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -1241,9 +1296,8 @@ function KanbanSection({ sectionKey, label, icon, items, collapsed, onToggleColl
   `;
 }
 
-function VerticalKanban({ queue, onPrioritize, onSendToBottom, onRemove, onRetry, onCardClick }) {
-  const [collapsedSections, setCollapsedSections] = useState({ completed: true });
-  const [cardAnimClass, setCardAnimClass] = useState('');
+function VerticalKanban({ queue, statusFilter, completedPage, onPageChange, onPrioritize, onSendToBottom, onRemove, onRetry, onCardClick }) {
+  const [collapsedSections, setCollapsedSections] = useState({ completed: false });
 
   if (!queue) return html`<div class="loading">Loading queue...</div>`;
 
@@ -1251,12 +1305,29 @@ function VerticalKanban({ queue, onPrioritize, onSendToBottom, onRemove, onRetry
     setCollapsedSections(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const sections = [
-    { key: 'in_progress', label: 'In Progress', icon: '\u2192' },
-    { key: 'pending', label: 'Pending', icon: '\u25A3' },
-    { key: 'failed', label: 'Failed', icon: '\u2717' },
-    { key: 'completed', label: 'Completed', icon: '\u2713' },
-  ];
+  // Determine which sections to show based on statusFilter
+  let sections;
+  if (statusFilter === 'active') {
+    sections = [
+      { key: 'in_progress', label: 'In Progress', icon: '\u2192' },
+      { key: 'pending', label: 'Pending', icon: '\u25A3' },
+    ];
+  } else if (statusFilter === 'completed') {
+    sections = [
+      { key: 'completed', label: 'Completed', icon: '\u2713', paginated: true },
+    ];
+  } else if (statusFilter === 'failed') {
+    sections = [
+      { key: 'failed', label: 'Failed', icon: '\u2717' },
+    ];
+  } else {
+    sections = [
+      { key: 'in_progress', label: 'In Progress', icon: '\u2192' },
+      { key: 'pending', label: 'Pending', icon: '\u25A3' },
+      { key: 'failed', label: 'Failed', icon: '\u2717' },
+      { key: 'completed', label: 'Completed', icon: '\u2713', paginated: true },
+    ];
+  }
 
   return html`
     <div class="v-kanban">
@@ -1273,9 +1344,23 @@ function VerticalKanban({ queue, onPrioritize, onSendToBottom, onRemove, onRetry
           onSendToBottom=${onSendToBottom}
           onRemove=${onRemove}
           onRetry=${onRetry}
-          cardAnimClass=${cardAnimClass}
           onCardClick=${onCardClick}
         />
+        ${s.paginated && queue._completedPages > 1 && html`
+          <div class="pagination">
+            <button
+              class="page-btn"
+              disabled=${completedPage === 0}
+              onClick=${() => onPageChange(completedPage - 1)}
+            >\u2190 Prev</button>
+            <span class="page-info">${completedPage + 1} / ${queue._completedPages} <span class="page-total">(${queue._totalCompleted} items, last 7d)</span></span>
+            <button
+              class="page-btn"
+              disabled=${completedPage >= queue._completedPages - 1}
+              onClick=${() => onPageChange(completedPage + 1)}
+            >Next \u2192</button>
+          </div>
+        `}
       `)}
     </div>
   `;
@@ -1566,7 +1651,7 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatchi
 
         ${!item.agent_pid && html`
           <div class="modal-dispatch">
-            <h3>\u{1F680} Spawn Agent</h3>
+            <h3>\u{1F680} ${item.completed_at || item.error ? 'Re-run' : 'Spawn'} Agent</h3>
             <div class="dispatch-row">
               <select class="dispatch-select" value=${selectedPrompt} onChange=${e => setSelectedPrompt(e.target.value)}>
                 ${(prompts || []).map(p => html`<option value=${p.id}>${p.name}</option>`)}
@@ -1586,6 +1671,18 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatchi
         ${item.agent_pid && html`
           <div class="modal-dispatch">
             <${AgentLogViewer} item=${item} />
+            <div class="dispatch-row" style="margin-top:0.75rem">
+              <select class="dispatch-select" value=${selectedPrompt} onChange=${e => setSelectedPrompt(e.target.value)}>
+                ${(prompts || []).map(p => html`<option value=${p.id}>${p.name}</option>`)}
+              </select>
+              <button
+                class="dispatch-btn"
+                disabled=${dispatching}
+                onClick=${() => onDispatch(item.id, selectedPrompt)}
+              >
+                ${dispatching ? '\u21BB Re-dispatching...' : '\u21BB Re-run'}
+              </button>
+            </div>
           </div>
         `}
       </div>
@@ -1597,6 +1694,9 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatchi
 function App() {
   const [tab, setTab] = useState('kanban');
   const [repoFilter, setRepoFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('active'); // active, completed, failed, all
+  const [completedPage, setCompletedPage] = useState(0);
+  const PAGE_SIZE = 20;
   const [syncing, setSyncing] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [animatingCards, setAnimatingCards] = useState({});
@@ -1634,12 +1734,31 @@ function App() {
   const repos = useFetch('/api/repos');
   const prompts = useFetch('/api/prompts');
 
-  const filteredQueue = repoFilter === 'all' ? queue.data : {
-    pending: (queue.data?.pending || []).filter(i => i.repo === repoFilter),
-    in_progress: (queue.data?.in_progress || []).filter(i => i.repo === repoFilter),
-    completed: (queue.data?.completed || []).filter(i => i.repo === repoFilter),
-    failed: (queue.data?.failed || []).filter(i => i.repo === repoFilter),
-  };
+  const filteredQueue = (() => {
+    if (!queue.data) return null;
+    const base = repoFilter === 'all' ? queue.data : {
+      pending: (queue.data?.pending || []).filter(i => i.repo === repoFilter),
+      in_progress: (queue.data?.in_progress || []).filter(i => i.repo === repoFilter),
+      completed: (queue.data?.completed || []).filter(i => i.repo === repoFilter),
+      failed: (queue.data?.failed || []).filter(i => i.repo === repoFilter),
+    };
+    // Filter completed to last 7 days
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const recentCompleted = (base.completed || []).filter(i => {
+      const ts = i.completed_at || i.started_at || i.enqueued_at;
+      return ts && new Date(ts).getTime() > sevenDaysAgo;
+    });
+    // Paginate completed
+    const totalCompleted = recentCompleted.length;
+    const paginatedCompleted = recentCompleted.slice(completedPage * PAGE_SIZE, (completedPage + 1) * PAGE_SIZE);
+    return {
+      ...base,
+      completed: paginatedCompleted,
+      _totalCompleted: totalCompleted,
+      _completedPage: completedPage,
+      _completedPages: Math.ceil(totalCompleted / PAGE_SIZE),
+    };
+  })();
 
   const counts = {
     kanban: (filteredQueue?.pending?.length || 0) + (filteredQueue?.in_progress?.length || 0) + (filteredQueue?.failed?.length || 0),
@@ -1782,17 +1901,34 @@ function App() {
       <${StatsBar} queue=${queue.data} stats=${stats.data} />
       ${tab === 'kanban' && html`
         <div class="filter-bar">
-          <select class="filter-select" value=${repoFilter} onChange=${e => setRepoFilter(e.target.value)}>
-            <option value="all">All Repos</option>
-            ${(repos.data || []).map(r => html`<option value=${r}>${r.split('/')[1]}</option>`)}
-          </select>
-          <span class="filter-count">${filteredQueue ? (filteredQueue.pending?.length || 0) + (filteredQueue.in_progress?.length || 0) + (filteredQueue.failed?.length || 0) : 0} active items</span>
-          <button class="sync-btn ${syncing ? 'syncing' : ''}" onClick=${syncGitHub} disabled=${syncing}>
-            ${syncing ? '\u21BB Syncing...' : '\u21BB Sync GitHub'}
-          </button>
+          <div class="status-tabs">
+            ${[
+              { key: 'active', label: 'Active' },
+              { key: 'completed', label: 'Completed' },
+              { key: 'failed', label: 'Failed' },
+              { key: 'all', label: 'All' },
+            ].map(st => html`
+              <button key=${st.key}
+                class="status-tab ${statusFilter === st.key ? 'active' : ''}"
+                onClick=${() => { setStatusFilter(st.key); setCompletedPage(0); }}
+              >${st.label}</button>
+            `)}
+          </div>
+          <div class="filter-right">
+            <select class="filter-select" value=${repoFilter} onChange=${e => setRepoFilter(e.target.value)}>
+              <option value="all">All Repos</option>
+              ${(repos.data || []).map(r => html`<option value=${r}>${r.split('/')[1]}</option>`)}
+            </select>
+            <button class="sync-btn ${syncing ? 'syncing' : ''}" onClick=${syncGitHub} disabled=${syncing}>
+              ${syncing ? '\u21BB Syncing...' : '\u21BB Sync GitHub'}
+            </button>
+          </div>
         </div>
         <${VerticalKanban}
           queue=${filteredQueue}
+          statusFilter=${statusFilter}
+          completedPage=${completedPage}
+          onPageChange=${setCompletedPage}
           onPrioritize=${prioritizeTop}
           onSendToBottom=${sendToBottom}
           onRemove=${removeItem}

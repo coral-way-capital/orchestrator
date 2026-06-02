@@ -244,13 +244,18 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             if not item_id or not prompt_id:
                 self._json_response({"error": "item_id and prompt_id required"}, 400)
                 return
-            # Look up item details from queue
+            # Look up item details from queue (search all lists for re-dispatch)
             from queue import load_queue
             queue = load_queue()
             item = None
-            for i in queue["pending"] + queue["in_progress"]:
-                if i["id"] == item_id:
-                    item = i
+            source_list_name = None
+            for lst_name in ("pending", "in_progress", "completed", "failed"):
+                for i in queue[lst_name]:
+                    if i["id"] == item_id:
+                        item = i
+                        source_list_name = lst_name
+                        break
+                if item:
                     break
             if not item:
                 self._json_response({"error": f"Item {item_id} not found"}, 404)
@@ -468,6 +473,32 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     result["status"] = "unknown"
             elif item.get("started_at"):
                 result["status"] = "exited"
+
+            # Auto-complete: if agent exited and item still in_progress, move to completed/failed
+            if result["status"] == "exited" and source_list_name == "in_progress":
+                from queue import load_queue as _lq, save_queue as _sq
+                q = _lq()
+                for i in q["in_progress"]:
+                    if i["id"] == item_id:
+                        i["completed_at"] = datetime.now(timezone.utc).isoformat()
+                        # Check log for errors
+                        log_ok = True
+                        if log_content and ("Traceback" in log_content or "KeyboardInterrupt" in log_content):
+                            log_ok = False
+                        q["in_progress"].remove(i)
+                        if log_ok:
+                            q["completed"].append(i)
+                            log_event("issue.completed", item_id=item_id, repo=item.get("repo"),
+                                      issue_number=item.get("issue_number"),
+                                      details={"auto": True, "source": "agent-status-check"})
+                        else:
+                            i["error"] = "Agent exited with error"
+                            q["failed"].append(i)
+                            log_event("issue.failed", item_id=item_id, repo=item.get("repo"),
+                                      issue_number=item.get("issue_number"),
+                                      details={"auto": True, "source": "agent-status-check"})
+                        _sq(q)
+                        break
             # Read log tail
             log_file = item.get("agent_log")
             log_content = None
@@ -723,41 +754,38 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         # Claim the item (move to in_progress)
         queue = load_queue()
         item = None
-        for i in queue["pending"]:
-            if i["id"] == item_id:
-                item = i
+        source_list = None
+        for lst_name in ("pending", "in_progress", "completed", "failed"):
+            for i in queue[lst_name]:
+                if i["id"] == item_id:
+                    item = i
+                    source_list = lst_name
+                    break
+            if item:
                 break
         if not item:
-            # Check in_progress — allow re-dispatch if agent is not running
-            for i in queue["in_progress"]:
-                if i["id"] == item_id:
-                    if i.get("agent_pid"):
-                        # Check if PID is still alive
-                        try:
-                            check = subprocess.run(["kill", "-0", str(i["agent_pid"])], capture_output=True, timeout=5)
-                            if check.returncode == 0:
-                                return {"error": "Agent still running", "item": i}, 409
-                        except Exception:
-                            pass
-                    # Agent exited or never started — move back to pending
-                    i["started_at"] = None
-                    i["agent_pid"] = None
-                    i["agent_log"] = None
-                    i["agent_prompt"] = None
-                    i["agent_started_at"] = None
-                    queue["in_progress"].remove(i)
-                    queue["pending"].insert(0, i)
-                    save_queue(queue)
-                    item = i
-                    break
-            if not item:
-                return {"error": f"Item {item_id} not found in pending"}, 404
+            return {"error": f"Item {item_id} not found"}, 404
 
-        # Move to in_progress
-        item["started_at"] = datetime.now(timezone.utc).isoformat()
-        queue["pending"].remove(item)
-        queue["in_progress"].append(item)
+        # If in_progress, check if agent is still alive
+        if source_list == "in_progress" and item.get("agent_pid"):
+            try:
+                check = subprocess.run(["kill", "-0", str(item["agent_pid"])], capture_output=True, timeout=5)
+                if check.returncode == 0:
+                    return {"error": "Agent still running", "item": item}, 409
+            except Exception:
+                pass
+
+        # Reset agent fields and move to in_progress
+        for k in ("started_at", "agent_pid", "agent_log", "agent_prompt", "agent_started_at", "completed_at", "error", "closed_via"):
+            item[k] = None
+        if source_list != "pending":
+            queue[source_list].remove(item)
+            queue["in_progress"].append(item)
+        else:
+            queue["pending"].remove(item)
+            queue["in_progress"].append(item)
         save_queue(queue)
+        item["started_at"] = datetime.now(timezone.utc).isoformat()
         log_event("issue.claimed", item_id=item_id, repo=repo,
                   issue_number=issue_number, title=title,
                   details={"source": "manual_dispatch", "prompt": prompt_id})
