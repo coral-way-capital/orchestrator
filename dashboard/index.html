@@ -713,6 +713,148 @@
   .sync-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .sync-btn.syncing { animation: pulse 1s ease infinite; }
 
+  /* Clickable cards */
+  .issue-card.clickable { cursor: pointer; }
+  .issue-card.clickable:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+  /* Agent badge */
+  .card-agent-badge {
+    font-size: 0.65rem;
+    color: var(--accent);
+    background: var(--card-bg-accent);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+  }
+
+  /* Modal Overlay */
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(2px);
+  }
+
+  .modal {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 720px;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    gap: 1rem;
+  }
+
+  .modal-title-row { display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 0; }
+  .modal-title { font-size: 1.1rem; font-weight: 600; margin: 0; line-height: 1.4; }
+
+  .modal-state {
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .modal-state.open { background: #16a34a22; color: #4ade80; }
+  .modal-state.closed { background: #ef444422; color: #f87171; }
+
+  .modal-close {
+    background: none; border: none; color: var(--text-muted);
+    font-size: 1.2rem; cursor: pointer; padding: 0.25rem;
+    flex-shrink: 0;
+  }
+  .modal-close:hover { color: var(--text); }
+
+  .modal-meta {
+    display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+  .modal-repo { display: flex; align-items: center; gap: 0.35rem; }
+  .modal-repo svg { opacity: 0.6; }
+  .modal-labels { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+  .modal-gh-link { color: var(--accent); text-decoration: none; margin-left: auto; }
+  .modal-gh-link:hover { text-decoration: underline; }
+
+  .modal-body {
+    padding: 1.25rem 1.5rem;
+  }
+
+  .modal-issue-body {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 0.85rem;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+  }
+
+  .modal-empty { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
+
+  .modal-comments { margin-top: 1.5rem; }
+  .modal-comments h3 { font-size: 0.85rem; color: var(--text-muted); margin: 0 0 0.75rem 0; }
+  .modal-comment {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+  }
+  .comment-header { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem; }
+  .comment-body { font-size: 0.8rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+
+  .modal-dispatch {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border);
+    background: var(--card-bg-accent);
+  }
+  .modal-dispatch h3 { font-size: 0.85rem; margin: 0 0 0.75rem 0; }
+
+  .dispatch-row { display: flex; gap: 0.5rem; align-items: center; }
+  .dispatch-select {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    color: var(--text);
+    font-size: 0.85rem;
+  }
+  .dispatch-btn {
+    padding: 0.5rem 1.25rem;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: #000;
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .dispatch-btn:hover { opacity: 0.85; }
+  .dispatch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .dispatch-desc { font-size: 0.7rem; color: var(--text-muted); margin: 0.5rem 0 0 0; }
+
+  .agent-info { display: flex; gap: 1rem; font-size: 0.8rem; color: var(--text-muted); flex-wrap: wrap; }
+  .agent-info span { background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px; }
+
   /* Repo Filter */
   .filter-bar {
     display: flex;
@@ -954,15 +1096,16 @@ function StatsBar({ queue, stats }) {
   `;
 }
 
-function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, onRetry, animClass }) {
+function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, onRetry, animClass, onClick }) {
   const url = githubIssueUrl(item);
   const showActions = sectionKey === 'pending';
   const showRetry = sectionKey === 'failed';
+  const showDispatch = sectionKey === 'pending' || sectionKey === 'in_progress';
 
   return html`
-    <div class="issue-card ${animClass || ''}" key=${item.id}>
+    <div class="issue-card ${animClass || ''} ${showDispatch ? 'clickable' : ''}" key=${item.id} onClick=${showDispatch ? () => onClick(item) : undefined}>
       <div class="card-top-row">
-        <a class="card-repo-link" href=${url} target="_blank" rel="noopener noreferrer">
+        <a class="card-repo-link" href=${url} target="_blank" rel="noopener noreferrer" onClick=${e => e.stopPropagation()}>
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
           ${shortRepo(item.repo)}#${item.issue_number}
         </a>
@@ -970,7 +1113,7 @@ function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, o
       </div>
 
       <div class="card-title-row">
-        <a class="card-title-link" href=${url} target="_blank" rel="noopener noreferrer">
+        <a class="card-title-link" href=${url} target="_blank" rel="noopener noreferrer" onClick=${e => e.stopPropagation()}>
           ${item.title || 'Untitled'}
         </a>
       </div>
@@ -991,11 +1134,15 @@ function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, o
           <span class="card-pr-info">PR #${item.pr_number}</span>
         `}
 
+        ${sectionKey === 'in_progress' && item.agent_pid && html`
+          <span class="card-agent-badge">\u{1F916} Agent running (PID ${item.agent_pid})</span>
+        `}
+
         ${sectionKey === 'failed' && item.error && html`
           <span style="font-size:0.6rem;color:var(--color-fail);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.error}</span>
         `}
 
-        <div class="card-actions">
+        <div class="card-actions" onClick=${e => e.stopPropagation()}>
           ${showActions && html`
             <button class="card-action-btn btn-top" onClick=${() => onPrioritize(item.id)} title="Move to top">\u2191 Top</button>
             <button class="card-action-btn btn-bottom" onClick=${() => onSendToBottom(item.id)} title="Send to bottom">\u2193 Bottom</button>
@@ -1011,7 +1158,7 @@ function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, o
   `;
 }
 
-function KanbanSection({ sectionKey, label, icon, items, collapsed, onToggleCollapse, onPrioritize, onSendToBottom, onRemove, onRetry, cardAnimClass }) {
+function KanbanSection({ sectionKey, label, icon, items, collapsed, onToggleCollapse, onPrioritize, onSendToBottom, onRemove, onRetry, cardAnimClass, onCardClick }) {
   return html`
     <div class="v-kanban-section section-${sectionKey} ${collapsed ? 'collapsed' : ''}">
       <div class="section-header" onClick=${onToggleCollapse}>
@@ -1035,6 +1182,7 @@ function KanbanSection({ sectionKey, label, icon, items, collapsed, onToggleColl
               onRemove=${onRemove}
               onRetry=${onRetry}
               animClass=${cardAnimClass}
+              onClick=${onCardClick}
             />
           `)
         }
@@ -1043,7 +1191,7 @@ function KanbanSection({ sectionKey, label, icon, items, collapsed, onToggleColl
   `;
 }
 
-function VerticalKanban({ queue, onPrioritize, onSendToBottom, onRemove, onRetry }) {
+function VerticalKanban({ queue, onPrioritize, onSendToBottom, onRemove, onRetry, onCardClick }) {
   const [collapsedSections, setCollapsedSections] = useState({ completed: true });
   const [cardAnimClass, setCardAnimClass] = useState('');
 
@@ -1076,6 +1224,7 @@ function VerticalKanban({ queue, onPrioritize, onSendToBottom, onRemove, onRetry
           onRemove=${onRemove}
           onRetry=${onRetry}
           cardAnimClass=${cardAnimClass}
+          onCardClick=${onCardClick}
         />
       `)}
     </div>
@@ -1232,12 +1381,102 @@ function showToast(msg, type = '') {
   }
 }
 
+function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatching }) {
+  if (!item) return null;
+  const [selectedPrompt, setSelectedPrompt] = useState('default');
+
+  const state = issue?.state || 'unknown';
+  const labels = issue?.labels || item.labels || [];
+  const body = issue?.body || item.body || '';
+  const comments = issue?._comments || [];
+
+  return html`
+    <div class="modal-overlay" onClick=${onClose}>
+      <div class="modal" onClick=${e => e.stopPropagation()}>
+        <div class="modal-header">
+          <div class="modal-title-row">
+            <span class="modal-state ${state}">${state.toUpperCase()}</span>
+            <h2 class="modal-title">${issue?.title || item.title}</h2>
+          </div>
+          <button class="modal-close" onClick=${onClose}>\u2715</button>
+        </div>
+
+        <div class="modal-meta">
+          <span class="modal-repo">
+            <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            ${item.repo}#${item.issue_number}
+          </span>
+          <span>by ${issue?.user?.login || item.author}</span>
+          ${labels.length > 0 && html`
+            <span class="modal-labels">
+              ${labels.slice(0, 6).map(l => html`<span class="label-tag">${typeof l === 'string' ? l : l.name}</span>`)}
+            </span>
+          `}
+          <a href=${item.html_url} target="_blank" rel="noopener noreferrer" class="modal-gh-link">Open in GitHub \u2197</a>
+        </div>
+
+        <div class="modal-body">
+          ${body ? html`<div class="modal-issue-body">${body}</div>` : html`<div class="modal-empty">No description provided.</div>`}
+          ${comments.length > 0 && html`
+            <div class="modal-comments">
+              <h3>Comments (${comments.length})</h3>
+              ${comments.map((c, i) => html`
+                <div key=${i} class="modal-comment">
+                  <div class="comment-header">
+                    <strong>${c.user}</strong>
+                    <span>${timeAgo(c.created_at)}</span>
+                  </div>
+                  <div class="comment-body">${c.body}</div>
+                </div>
+              `)}
+            </div>
+          `}
+        </div>
+
+        ${!item.agent_pid && html`
+          <div class="modal-dispatch">
+            <h3>\u{1F680} Spawn Agent</h3>
+            <div class="dispatch-row">
+              <select class="dispatch-select" value=${selectedPrompt} onChange=${e => setSelectedPrompt(e.target.value)}>
+                ${(prompts || []).map(p => html`<option value=${p.id}>${p.name}</option>`)}
+              </select>
+              <button
+                class="dispatch-btn"
+                disabled=${dispatching}
+                onClick=${() => onDispatch(item.id, selectedPrompt)}
+              >
+                ${dispatching ? '\u21BB Dispatching...' : '\u25B6 Dispatch'}
+              </button>
+            </div>
+            ${prompts && html`<p class="dispatch-desc">${(prompts.find(p => p.id === selectedPrompt) || {}).description || ''}</p>`}
+          </div>
+        `}
+
+        ${item.agent_pid && html`
+          <div class="modal-dispatch">
+            <h3>\u{1F916} Agent Running</h3>
+            <div class="agent-info">
+              <span>PID: ${item.agent_pid}</span>
+              <span>Started: ${timeAgo(item.agent_started_at)}</span>
+              <span>Prompt: ${item.agent_prompt || 'unknown'}</span>
+            </div>
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
 function App() {
   const [tab, setTab] = useState('kanban');
   const [repoFilter, setRepoFilter] = useState('all');
   const [syncing, setSyncing] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [animatingCards, setAnimatingCards] = useState({});
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [issueDetail, setIssueDetail] = useState(null);
+  const [issueLoading, setIssueLoading] = useState(false);
+  const [dispatching, setDispatching] = useState(false);
   _setToasts = setToasts;
 
   const queue = useFetch('/api/queue');
@@ -1245,6 +1484,7 @@ function App() {
   const stats = useFetch('/api/stats');
   const tree = useFetch('/api/decompose-tree');
   const repos = useFetch('/api/repos');
+  const prompts = useFetch('/api/prompts');
 
   const filteredQueue = repoFilter === 'all' ? queue.data : {
     pending: (queue.data?.pending || []).filter(i => i.repo === repoFilter),
@@ -1344,6 +1584,41 @@ function App() {
     }
   }
 
+  async function openIssueDetail(item) {
+    setSelectedItem(item);
+    setIssueDetail(null);
+    setIssueLoading(true);
+    try {
+      const r = await fetch(API + '/api/issue?repo=' + encodeURIComponent(item.repo) + '&number=' + item.issue_number);
+      if (!r.ok) throw new Error(r.status);
+      setIssueDetail(await r.json());
+    } catch (e) {
+      setIssueDetail({ error: e.message });
+    } finally {
+      setIssueLoading(false);
+    }
+  }
+
+  async function dispatchAgent(itemId, promptId) {
+    setDispatching(true);
+    try {
+      const r = await fetch(API + '/api/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: itemId, prompt_id: promptId }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+      showToast(`Agent dispatched! PID ${d.pid}`, 'success');
+      setSelectedItem(null);
+      queue.refresh();
+    } catch (e) {
+      showToast('Dispatch failed: ' + e.message, 'error');
+    } finally {
+      setDispatching(false);
+    }
+  }
+
   return html`
     <${Header} queue=${queue.data} />
     <${TabBar} active=${tab} onSwitch=${setTab} counts=${counts} />
@@ -1366,6 +1641,7 @@ function App() {
           onSendToBottom=${sendToBottom}
           onRemove=${removeItem}
           onRetry=${retryItem}
+          onCardClick=${openIssueDetail}
         />
       `}
       ${tab === 'activity' && html`<${ActivityView} events=${events.data} />`}
@@ -1373,6 +1649,16 @@ function App() {
       ${tab === 'guards' && html`<${GuardsView} stats=${stats.data} />`}
       ${tab === 'tree' && html`<${TreeView} data=${tree.data} />`}
     </div>
+    ${selectedItem && html`
+      <${IssueDetailModal}
+        item=${selectedItem}
+        issue=${issueDetail}
+        prompts=${prompts.data}
+        onClose=${() => setSelectedItem(null)}
+        onDispatch=${dispatchAgent}
+        dispatching=${dispatching}
+      />
+    `}
     <div class="toast-container">
       ${toasts.map(t => html`<div key=${t.id} class="toast ${t.type}">${t.msg}</div>`)}
     </div>

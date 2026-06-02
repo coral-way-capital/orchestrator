@@ -1,4 +1,29 @@
 {
-  "nextId": 4,
-  "tasks": []
+  "nextId": 6,
+  "tasks": [
+    {
+      "id": "4",
+      "subject": "Create prompts directory with default templates",
+      "description": "Create ~/.hermes/issue-queue/prompts/ with example prompt .md files. Add API endpoint to load them. Each file has a name (filename) and body with {{variables}}.",
+      "status": "completed",
+      "activeForm": "Creating prompts directory and API",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1780420331534,
+      "updatedAt": 1780420659444
+    },
+    {
+      "id": "5",
+      "subject": "Add backend APIs: issue detail, prompts list, agent dispatch",
+      "description": "Add: GET /api/issue?repo=X&number=N (fetch full issue from GitHub), GET /api/prompts (list available prompt templates), POST /api/dispatch (spawn pi agent for an issue with selected prompt). Track spawned agents in queue item (agent_pid, agent_status, agent_log).",
+      "status": "in_progress",
+      "activeForm": "Adding backend APIs for issue detail and agent spawn",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1780420351183,
+      "updatedAt": 1780420664549
+    }
+  ]
 }

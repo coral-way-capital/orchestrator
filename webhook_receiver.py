@@ -35,6 +35,21 @@ from queue import enqueue
 from events import init_db, log_event, query_events, get_stats, get_decompose_tree
 
 DASHBOARD_DIR = BASE_DIR / "dashboard"
+PROMPTS_DIR = BASE_DIR / "prompts"
+REPO_MAP = {
+    "coral-way-capital/audit-agent": "/home/deploy/apps/audit-agent",
+    "coral-way-capital/website": "/var/www/coralwaycapital",
+    "coral-way-capital/rsm-monitor": "/home/deploy/apps/eckhart",
+    "coral-way-capital/eckhart": "/home/deploy/apps/eckhart",
+    "coral-way-capital/zenna-crm": "/home/deploy/apps/zenna-crm",
+    "coral-way-capital/inmuebles": "/home/deploy/apps/inmuebles",
+    "coral-way-capital/infrastructure": "/home/deploy/apps/infrastructure",
+    "coral-way-capital/tasks-cli": "/home/deploy/apps/tasks-cli",
+    "coral-way-capital/agent-configs": "/home/deploy/apps/agent-configs",
+    "coral-way-capital/sre": "/home/deploy/apps/sre",
+    "coral-way-capital/client-status": "/home/deploy/apps/client-status",
+    "coral-way-capital/diffusionZones": "/home/deploy/apps/diffusionZones",
+}
 
 # Secret is shared with GitHub webhook config
 SECRET_FILE = os.path.expanduser("~/.hermes/issue-queue/webhook-secret")
@@ -213,8 +228,41 @@ def load_queue_json():
 
 class IssueWebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):
+        path = unquote(self.path.split("?")[0])
         content_length = int(self.headers.get("Content-Length", 0))
         raw_body = self.rfile.read(content_length)
+
+        # API dispatch route
+        if path == "/api/dispatch":
+            try:
+                payload = json.loads(raw_body)
+            except json.JSONDecodeError:
+                self._json_response({"error": "Invalid JSON"}, 400)
+                return
+            item_id = payload.get("item_id")
+            prompt_id = payload.get("prompt_id")
+            if not item_id or not prompt_id:
+                self._json_response({"error": "item_id and prompt_id required"}, 400)
+                return
+            # Look up item details from queue
+            from queue import load_queue
+            queue = load_queue()
+            item = None
+            for i in queue["pending"] + queue["in_progress"]:
+                if i["id"] == item_id:
+                    item = i
+                    break
+            if not item:
+                self._json_response({"error": f"Item {item_id} not found"}, 404)
+                return
+            result, status = self._dispatch_agent(
+                item_id, item["repo"], item["issue_number"],
+                item["title"], item["body"], item["html_url"], prompt_id
+            )
+            self._json_response(result, status)
+            return
+
+        # GitHub webhook
         signature = self.headers.get("X-Hub-Signature-256", "")
 
         if not verify_signature(raw_body, signature):
@@ -346,6 +394,41 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             q = load_queue_json()
             repos = sorted(set(x["repo"] for x in q["pending"] + q["in_progress"] + q["completed"] + q["failed"]))
             self._json_response(repos)
+        elif path == "/api/issue":
+            params = self._parse_qs()
+            repo = params.get("repo")
+            number = params.get("number")
+            if not repo or not number:
+                self._json_response({"error": "repo and number required"}, 400)
+                return
+            try:
+                result = subprocess.run(
+                    ["gh", "api", f"repos/{repo}/issues/{number}"],
+                    capture_output=True, text=True, timeout=15
+                )
+                if result.returncode != 0:
+                    self._json_response({"error": result.stderr[:200]}, 502)
+                    return
+                issue = json.loads(result.stdout)
+                # Also fetch comments
+                comments_result = subprocess.run(
+                    ["gh", "api", f"repos/{repo}/issues/{number}/comments", "--jq", ".[] | {user: .user.login, body, created_at}"],
+                    capture_output=True, text=True, timeout=15
+                )
+                comments = []
+                if comments_result.returncode == 0 and comments_result.stdout.strip():
+                    for line in comments_result.stdout.strip().split("\n"):
+                        try:
+                            comments.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
+                issue["_comments"] = comments
+                self._json_response(issue)
+            except Exception as e:
+                self._json_response({"error": str(e)[:200]}, 500)
+        elif path == "/api/prompts":
+            prompts = self._load_prompts()
+            self._json_response(prompts)
         elif path == "/api/sync":
             repo_filter = self._parse_qs().get("repo")
             from queue import sync_github_issues
@@ -474,6 +557,159 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         self.end_headers()
         with open(filepath, "rb") as f:
             self.wfile.write(f.read())
+
+    def _load_prompts(self):
+        """Load prompt templates from the prompts/ directory."""
+        prompts = []
+        if not PROMPTS_DIR.exists():
+            return prompts
+        for f in sorted(PROMPTS_DIR.iterdir()):
+            if f.suffix not in ('.md', '.txt'):
+                continue
+            content = f.read_text()
+            # Parse YAML frontmatter
+            name = f.stem
+            description = ""
+            body = content
+            if content.startswith('---'):
+                end = content.find('---', 3)
+                if end > 0:
+                    import yaml
+                    try:
+                        meta = yaml.safe_load(content[3:end])
+                        name = meta.get('name', name)
+                        description = meta.get('description', '')
+                    except Exception:
+                        pass
+                    body = content[end + 3:].strip()
+            prompts.append({
+                "id": f.stem,
+                "name": name,
+                "description": description,
+                "body": body,
+            })
+        return prompts
+
+    def _render_prompt(self, template_body, variables):
+        """Render a prompt template with {{variable}} substitution."""
+        result = template_body
+        for key, value in variables.items():
+            result = result.replace('{{' + key + '}}', str(value))
+        return result
+
+    def _dispatch_agent(self, item_id, repo, issue_number, title, body, html_url, prompt_id):
+        """Spawn a pi agent to work on an issue. Returns agent info."""
+        from queue import load_queue, save_queue, next_pending
+
+        # Load prompt template
+        prompts = self._load_prompts()
+        prompt = next((p for p in prompts if p["id"] == prompt_id), None)
+        if not prompt:
+            return {"error": f"Prompt '{prompt_id}' not found"}, 400
+
+        local_path = REPO_MAP.get(repo, f"/home/deploy/apps/{repo.split('/')[-1]}")
+
+        # Render the prompt
+        rendered = self._render_prompt(prompt["body"], {
+            "title": title,
+            "repo": repo,
+            "local_path": local_path,
+            "html_url": html_url,
+            "body": body or "",
+            "issue_number": str(issue_number),
+        })
+
+        # Claim the item (move to in_progress)
+        queue = load_queue()
+        item = None
+        for i in queue["pending"]:
+            if i["id"] == item_id:
+                item = i
+                break
+        if not item:
+            # Also check in_progress (already dispatched)
+            for i in queue["in_progress"]:
+                if i["id"] == item_id:
+                    return {"error": "Already in progress", "item": i}, 409
+            return {"error": f"Item {item_id} not found in pending"}, 404
+
+        # Move to in_progress
+        item["started_at"] = datetime.now(timezone.utc).isoformat()
+        queue["pending"].remove(item)
+        queue["in_progress"].append(item)
+        save_queue(queue)
+        log_event("issue.claimed", item_id=item_id, repo=repo,
+                  issue_number=issue_number, title=title,
+                  details={"source": "manual_dispatch", "prompt": prompt_id})
+
+        # Write prompt to temp file so pi can read it
+        import tempfile
+        prompt_file = Path(tempfile.mktemp(suffix=".md", prefix=f"dispatch-{item_id}-"))
+        prompt_file.write_text(rendered)
+
+        # Build the pi command
+        # Run pi in non-interactive mode, cd into the repo, with the rendered prompt
+        log_file = Path(tempfile.mktemp(suffix=".log", prefix=f"agent-{item_id}-"))
+
+        cmd = (
+            f"cd {local_path} && "
+            f"nohup pi -p --no-session"
+            f" --append-system-prompt 'You are working on issue #{issue_number}: {title}. When done, open a PR that closes #{issue_number}. '"
+            f" < {prompt_file}"
+            f" > {log_file} 2>&1 &"
+            f" echo $!"
+        )
+
+        try:
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+            pid = result.stdout.strip()
+            if not pid:
+                # Failed to start, move back to pending
+                queue = load_queue()
+                for i in queue["in_progress"]:
+                    if i["id"] == item_id:
+                        i["started_at"] = None
+                        queue["in_progress"].remove(i)
+                        queue["pending"].insert(0, i)
+                        save_queue(queue)
+                        break
+                return {"error": "Failed to start agent", "stderr": result.stderr[:200]}, 500
+
+            # Track the agent
+            queue = load_queue()
+            for i in queue["in_progress"]:
+                if i["id"] == item_id:
+                    i["agent_pid"] = pid
+                    i["agent_log"] = str(log_file)
+                    i["agent_prompt"] = prompt_id
+                    i["agent_started_at"] = datetime.now(timezone.utc).isoformat()
+                    save_queue(queue)
+                    break
+
+            log_event("issue.dispatched", item_id=item_id, repo=repo,
+                      issue_number=issue_number, title=title,
+                      details={"pid": pid, "prompt": prompt_id, "log": str(log_file)})
+
+            return {
+                "ok": True,
+                "item_id": item_id,
+                "pid": pid,
+                "log_file": str(log_file),
+                "prompt": prompt_id,
+                "local_path": local_path,
+            }, 200
+
+        except Exception as e:
+            # Move back to pending on error
+            queue = load_queue()
+            for i in queue["in_progress"]:
+                if i["id"] == item_id:
+                    i["started_at"] = None
+                    queue["in_progress"].remove(i)
+                    queue["pending"].insert(0, i)
+                    save_queue(queue)
+                    break
+            return {"error": str(e)[:200]}, 500
 
     def do_PATCH(self):
         """Handle prioritization: PATCH /api/queue/prioritize/<id> or PATCH /api/queue/move-down/<id>"""
