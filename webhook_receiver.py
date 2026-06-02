@@ -296,12 +296,26 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
 
                 actions_taken = []
 
-                # Create branch if on main
+                # Create or switch to branch if on main
                 if current_branch == "main" or not current_branch:
                     branch_name = f"feat/issue-{issue_number}"
-                    subprocess.run(["git", "checkout", "-b", branch_name], cwd=local_path, timeout=10)
+                    # Check if branch already exists locally
+                    branch_exists = subprocess.run(
+                        ["git", "branch", "--list", branch_name],
+                        capture_output=True, text=True, cwd=local_path, timeout=10
+                    ).stdout.strip()
+                    if branch_exists:
+                        subprocess.run(["git", "checkout", branch_name], cwd=local_path, timeout=10)
+                        actions_taken.append(f"Switched to existing branch {branch_name}")
+                        # Check for changes on this branch
+                        changes = subprocess.run(
+                            ["git", "status", "--porcelain"],
+                            capture_output=True, text=True, cwd=local_path, timeout=10
+                        ).stdout.strip()
+                    else:
+                        subprocess.run(["git", "checkout", "-b", branch_name], cwd=local_path, timeout=10)
+                        actions_taken.append(f"Created branch {branch_name}")
                     current_branch = branch_name
-                    actions_taken.append(f"Created branch {branch_name}")
 
                 # Commit if there are changes
                 if changes:
@@ -339,22 +353,31 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                             return
                     actions_taken.append(f"Committed: {msg}")
 
-                # Push
+                # Push (use --force-with-lease for existing remote branches)
                 push_r = subprocess.run(
                     ["git", "push", "-u", "origin", current_branch],
                     capture_output=True, text=True, cwd=local_path, timeout=30
                 )
                 if push_r.returncode != 0:
+                    # Try force-with-lease for existing remote
+                    push_r = subprocess.run(
+                        ["git", "push", "--force-with-lease", "-u", "origin", current_branch],
+                        capture_output=True, text=True, cwd=local_path, timeout=30
+                    )
+                if push_r.returncode != 0:
                     self._json_response({"error": f"Push failed: {push_r.stderr[:200]}"}, 500)
                     return
                 actions_taken.append(f"Pushed {current_branch}")
 
-                # Create PR
+                # Create PR (use GITHUB_TOKEN for gh auth)
                 pr_title = f"feat: resolve #{issue_number} — {item['title'][:60]}"
                 pr_body = f"Closes #{issue_number}\n\nAuto-finished by Mission Control."
+                env_with_token = os.environ.copy()
+                env_with_token["GH_TOKEN"] = env_with_token.get("GITHUB_TOKEN", "")
                 pr_r = subprocess.run(
                     ["gh", "pr", "create", "--title", pr_title, "--body", pr_body],
-                    capture_output=True, text=True, cwd=local_path, timeout=15
+                    capture_output=True, text=True, cwd=local_path, timeout=15,
+                    env=env_with_token
                 )
                 if pr_r.returncode == 0:
                     pr_url = pr_r.stdout.strip()
