@@ -470,20 +470,55 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 result["status"] = "exited"
             # Read log tail
             log_file = item.get("agent_log")
+            log_content = None
             if log_file and Path(log_file).exists():
                 try:
-                    tail_bytes = 15000  # ~last 15KB
+                    tail_bytes = 15000
                     with open(log_file, "rb") as f:
                         f.seek(0, 2)
                         size = f.tell()
                         if size > tail_bytes:
                             f.seek(size - tail_bytes)
-                            f.readline()  # skip partial first line
+                            f.readline()
                         else:
                             f.seek(0)
-                        result["log_tail"] = f.read().decode("utf-8", errors="replace")
+                        log_content = f.read().decode("utf-8", errors="replace")
                 except Exception as e:
-                    result["log_tail"] = f"Error reading log: {e}"
+                    log_content = f"Error reading log: {e}"
+
+            # If log file is empty, try hermes agent.log for live activity
+            if not log_content or log_content.strip() == "":
+                agent_log = Path.home() / ".hermes" / "logs" / "agent.log"
+                if agent_log.exists():
+                    try:
+                        # Get last 200 lines from agent.log (live tool activity)
+                        r = subprocess.run(
+                            ["tail", "-200", str(agent_log)],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        if r.returncode == 0 and r.stdout.strip():
+                            # Filter to recent activity (tool calls, errors)
+                            lines = r.stdout.strip().split("\n")
+                            filtered = []
+                            for line in lines:
+                                if any(kw in line.lower() for kw in ["tool", "error", "warning", "subagent", "delegat"]):
+                                    # Extract just the message part
+                                    parts = line.split(" INFO ", 1)
+                                    if len(parts) > 1:
+                                        filtered.append(parts[1])
+                                    elif len(parts) == 1:
+                                        # Try WARN/ERROR
+                                        for lvl in (" WARN ", " ERROR "):
+                                            p = line.split(lvl, 1)
+                                            if len(p) > 1:
+                                                filtered.append(p[1])
+                                                break
+                            if filtered:
+                                log_content = "[Live agent.log — tool activity]\n" + "\n".join(filtered[-50:])
+                    except Exception:
+                        pass
+
+            result["log_tail"] = log_content
             # Check for linked PRs on the GitHub issue
             repo = item.get("repo")
             issue_number = item.get("issue_number")
@@ -732,7 +767,6 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         safe_id = item_id.replace("/", "_").replace("#", "-")
         prompt_file = Path(tempfile.mktemp(suffix=".md", prefix=f"dispatch-{safe_id}-"))
         prompt_file.write_text(rendered)
-        print(f"DISPATCH: prompt_file={prompt_file} exists={prompt_file.exists()} size={prompt_file.stat().st_size if prompt_file.exists() else 0}")
 
         # Build the hermes command
         # Use python -u (unbuffered) directly for live log output
@@ -743,7 +777,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         cmd = (
             f"cd {local_path} && "
             f"PYTHONUNBUFFERED=1 GITHUB_TOKEN={os.environ.get('GITHUB_TOKEN', '')} "
-            f"nohup {hermes_python} -u {hermes_main} chat -q \"$(cat {prompt_file})\" -Q --yolo"
+            f"{hermes_python} -u {hermes_main} chat -q \"$(cat {prompt_file})\" -Q --yolo"
             f" > {log_file} 2>&1 &"
             f" echo $!"
         )
