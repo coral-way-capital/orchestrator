@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 QUEUE_FILE = Path.home() / ".hermes" / "issue-queue" / "queue.json"
+SYNC_STATE_FILE = QUEUE_FILE.parent / "sync-state.json"
 MAX_COMPLETED = 100  # keep last N completed items
 
 # Event logger
@@ -61,6 +62,24 @@ def save_queue(queue):
         queue["completed"] = queue["completed"][-MAX_COMPLETED:]
     with open(QUEUE_FILE, "w") as f:
         json.dump(queue, f, indent=2)
+
+
+def load_sync_state():
+    """Load per-repo last-sync timestamps. Returns {repo: iso_timestamp}."""
+    if SYNC_STATE_FILE.exists():
+        try:
+            with open(SYNC_STATE_FILE) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def save_sync_state(state):
+    """Persist sync state (per-repo timestamps)."""
+    SYNC_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(SYNC_STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
 
 
 def check_linked_prs(repo, issue_number):
@@ -335,34 +354,95 @@ def move_to_bottom(item_id):
     return False
 
 
-def sync_github_issues(repo_full_name=None):
-    """Fetch open issues from GitHub and enqueue any not already in queue.
-    Skips issues that are already in pending, in_progress, or have open linked PRs.
-    Returns list of newly enqueued item IDs."""
+def verify_issue_closed(repo, issue_number):
+    """Quick check if a single issue is closed on GitHub."""
     import subprocess
+    try:
+        result = subprocess.run(
+            ["gh", "api", f"repos/{repo}/issues/{issue_number}", "--jq", ".state"],
+            capture_output=True, text=True, timeout=10
+        )
+        return result.returncode == 0 and result.stdout.strip() == "closed"
+    except Exception:
+        return False
+
+
+def auto_close_item(item_id, source="sync_prune"):
+    """Move an item from any active queue list to completed (sync auto-close)."""
     queue = load_queue()
-    existing_ids = set(x["id"] for x in queue["pending"] + queue["in_progress"])
-    done_ids = set(x["id"] for x in queue["completed"] + queue["failed"])
+    for list_name in ["pending", "in_progress", "failed"]:
+        for item in queue[list_name]:
+            if item["id"] == item_id:
+                item["completed_at"] = datetime.now(timezone.utc).isoformat()
+                item["closed_via"] = source
+                queue[list_name].remove(item)
+                queue["completed"].append(item)
+                save_queue(queue)
+                return True
+    return False
+
+
+def sync_github_issues(repo_full_name=None):
+    """Incremental sync with GitHub.
+
+    Phase 1 (first sync per repo): Fetch all open issues → add new, detect closed.
+    Phase 2 (incremental): Fetch only issues updated since last sync → add new, prune closed.
+
+    Returns structured result:
+      {repos: {repo: {added: [...], closed: [...], unchanged: N, errors: [...]}},
+       totals: {added: N, closed: N, unchanged: N}}
+    """
+    import subprocess
+
+    sync_state = load_sync_state()
+    queue = load_queue()
+    existing_ids = set(
+        x["id"] for x in
+        queue["pending"] + queue["in_progress"] + queue["completed"] + queue["failed"]
+    )
 
     if repo_full_name:
         repos = [repo_full_name]
     else:
-        repos = list(set(x["repo"] for x in queue["pending"] + queue["in_progress"] + queue["completed"] + queue["failed"]))
+        repos = list(set(
+            x["repo"] for x in
+            queue["pending"] + queue["in_progress"] + queue["completed"] + queue["failed"]
+        ))
 
-    newly_enqueued = []
+    sync_result = {"repos": {}, "totals": {"added": 0, "closed": 0, "unchanged": 0}}
+    now = datetime.now(timezone.utc)
+    skip_labels = {"question", "discussion", "wontfix", "duplicate", "invalid", "docs"}
+
     for repo in repos:
+        repo_result = {"added": [], "closed": [], "unchanged": 0, "errors": []}
+        last_sync = sync_state.get(repo)
+        is_first_sync = last_sync is None
+
         try:
+            # Build fetch URL — incremental vs full
+            if is_first_sync:
+                url = f"repos/{repo}/issues?state=open&per_page=100"
+            else:
+                url = f"repos/{repo}/issues?state=all&per_page=100&since={last_sync}"
+
+            timeout = 120 if is_first_sync else 30
+
             result = subprocess.run(
-                ["gh", "api", f"repos/{repo}/issues",
-                 "--jq", ".[] | select(.pull_request == null) | {number, title, body, html_url, user: .user.login, labels: [.labels[].name]}"],
-                capture_output=True, text=True, timeout=30
+                ["gh", "api", "--paginate", url, "--jq",
+                 '.[] | select(.pull_request == null)'
+                 '| {number, state, title, body, html_url, user: .user.login,'
+                 '   labels: [.labels[].name], updated_at}'],
+                capture_output=True, text=True, timeout=timeout
             )
+
             if result.returncode != 0:
-                print(f"ERROR fetching {repo}: {result.stderr[:100]}")
+                repo_result["errors"].append(result.stderr[:200])
+                sync_result["repos"][repo] = repo_result
                 continue
 
+            # Parse JSONL output
             issues = []
-            for line in result.stdout.strip().split("\\n"):
+            for line in result.stdout.strip().split("\n"):
                 line = line.strip()
                 if line:
                     try:
@@ -370,14 +450,19 @@ def sync_github_issues(repo_full_name=None):
                     except json.JSONDecodeError:
                         continue
 
-            for issue in issues:
-                item_id = f"{repo}#{issue['number']}"
-                if item_id in existing_ids or item_id in done_ids:
+            open_by_number = {i["number"]: i for i in issues if i.get("state") == "open"}
+            closed_by_number = {i["number"]: i for i in issues if i.get("state") == "closed"}
+
+            # --- Phase 1: Enqueue new open issues ---
+            for num, issue in open_by_number.items():
+                item_id = f"{repo}#{num}"
+                if item_id in existing_ids:
+                    repo_result["unchanged"] += 1
                     continue
 
                 labels = issue.get("labels", [])
-                skip_labels = {"question", "discussion", "wontfix", "duplicate", "invalid", "docs"}
                 if any(l.lower() in skip_labels for l in labels):
+                    repo_result["unchanged"] += 1
                     continue
 
                 enqueued = enqueue(
@@ -390,16 +475,57 @@ def sync_github_issues(repo_full_name=None):
                     html_url=issue.get("html_url", ""),
                 )
                 if enqueued:
-                    newly_enqueued.append(item_id)
+                    repo_result["added"].append(item_id)
                     existing_ids.add(item_id)
                     log_event("issue.synced", item_id=item_id, repo=repo,
                               issue_number=issue["number"], title=issue.get("title", ""),
                               details={"source": "github_sync", "labels": labels})
-        except Exception as e:
-            print(f"ERROR syncing {repo}: {e}")
 
-    print(f"SYNC COMPLETE: {len(newly_enqueued)} newly enqueued")
-    return newly_enqueued
+            # --- Phase 2: Prune closed issues ---
+            queue = load_queue()  # reload after enqueues
+
+            items_to_close = []
+            for item in queue["pending"] + queue["in_progress"] + queue["failed"]:
+                if item["repo"] != repo:
+                    continue
+                issue_num = item["issue_number"]
+
+                if issue_num in closed_by_number:
+                    # Confirmed closed in this sync window
+                    items_to_close.append(item)
+                elif is_first_sync and issue_num not in open_by_number:
+                    # First sync: not in open set → verify individually
+                    if verify_issue_closed(repo, issue_num):
+                        items_to_close.append(item)
+
+            for item in items_to_close:
+                auto_close_item(item["id"], source="sync_prune")
+                repo_result["closed"].append(item["id"])
+                log_event("issue.sync_pruned", item_id=item["id"], repo=repo,
+                          issue_number=item["issue_number"], title=item.get("title", ""),
+                          details={"source": "github_sync", "reason": "issue_closed"})
+
+            # Update sync state for this repo
+            sync_state[repo] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        except subprocess.TimeoutExpired:
+            repo_result["errors"].append("Timeout fetching from GitHub")
+        except Exception as e:
+            repo_result["errors"].append(str(e)[:200])
+
+        sync_result["repos"][repo] = repo_result
+
+    # Calculate totals
+    for repo, rr in sync_result["repos"].items():
+        sync_result["totals"]["added"] += len(rr["added"])
+        sync_result["totals"]["closed"] += len(rr["closed"])
+        sync_result["totals"]["unchanged"] += rr["unchanged"]
+
+    save_sync_state(sync_state)
+
+    t = sync_result["totals"]
+    print(f"SYNC COMPLETE: {t['added']} added, {t['closed']} closed, {t['unchanged']} unchanged")
+    return sync_result
 
 
 if __name__ == "__main__":
@@ -454,7 +580,7 @@ if __name__ == "__main__":
     elif cmd == "sync":
         repo = sys.argv[2] if len(sys.argv) > 2 else None
         results = sync_github_issues(repo)
-        print(json.dumps(results))
+        print(json.dumps(results, indent=2))
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)

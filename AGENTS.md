@@ -53,6 +53,7 @@ GitHub Issue ──webhook──▶ webhook_receiver.py (port 8646)
 |------|------|
 | `~/.hermes/issue-queue/queue.json` | Main issue queue |
 | `~/.hermes/issue-queue/decompose-queue.json` | Epic decomposition queue |
+| `~/.hermes/issue-queue/sync-state.json` | Per-repo sync timestamps (enables incremental sync) |
 | `~/.hermes/issue-queue/events.db` | SQLite event log |
 | `~/.hermes/issue-queue/webhook-secret` | HMAC secret shared with GitHub |
 
@@ -89,7 +90,7 @@ GitHub Issue ──webhook──▶ webhook_receiver.py (port 8646)
 | `/api/stats` | Aggregate metrics (cycle times, hourly activity, event breakdown by type/repo, guard triggers) |
 | `/api/decompose-tree` | Parent→child tree from decomposition events |
 | `/api/repos` | Sorted list of all repos in the queue |
-| `/api/sync?repo=<repo>` | Fetch open issues from GitHub, enqueue new ones |
+| `/api/sync?repo=<repo>` | Incremental sync: add new open issues, prune closed ones. Returns per-repo breakdown |
 | `/api/health` | Health check with queue counts |
 | `/health` | Simple health check |
 

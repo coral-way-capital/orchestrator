@@ -350,7 +350,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             repo_filter = self._parse_qs().get("repo")
             from queue import sync_github_issues
             results = sync_github_issues(repo_filter)
-            self._json_response({"synced": results, "count": len(results)})
+            self._json_response(results)
         elif path == "/api/health":
             dq = load_decompose_queue()
             q = load_queue_json()

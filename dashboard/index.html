@@ -1266,7 +1266,19 @@ function App() {
       const params = repoFilter !== 'all' ? `?repo=${encodeURIComponent(repoFilter)}` : '';
       const r = await fetch(API + '/api/sync' + params);
       const d = await r.json();
-      showToast(`Synced ${d.count} new issues from GitHub`, 'success');
+      const t = d.totals || {};
+      const parts = [];
+      if (t.added) parts.push(`${t.added} added`);
+      if (t.closed) parts.push(`${t.closed} closed`);
+      if (t.unchanged) parts.push(`${t.unchanged} unchanged`);
+      // Check for per-repo errors
+      const errors = Object.entries(d.repos || {})
+        .filter(([, v]) => v.errors?.length > 0)
+        .map(([repo, v]) => `${repo.split('/')[1]}: ${v.errors[0]}`);
+      const summary = parts.length > 0 ? parts.join(', ') : 'No changes';
+      showToast(errors.length > 0
+        ? `${summary} (${errors.length} error${errors.length > 1 ? 's' : ''})`
+        : summary, errors.length > 0 ? 'warning' : 'success');
       queue.refresh();
     } catch (e) {
       showToast('Sync failed: ' + e.message, 'error');
