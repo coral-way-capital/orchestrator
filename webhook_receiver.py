@@ -734,14 +734,15 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         prompt_file.write_text(rendered)
 
         # Build the hermes command
-        # PYTHONUNBUFFERED=1 forces live output to log file (otherwise Python buffers when not a TTY)
-        hermes_bin = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "hermes"
+        # Use python -u (unbuffered) directly for live log output
+        hermes_python = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python"
+        hermes_main = Path.home() / ".hermes" / "hermes-agent" / "hermes_cli" / "main.py"
         log_file = Path(tempfile.mktemp(suffix=".log", prefix=f"agent-{safe_id}-"))
 
         cmd = (
             f"cd {local_path} && "
             f"PYTHONUNBUFFERED=1 GITHUB_TOKEN={os.environ.get('GITHUB_TOKEN', '')} "
-            f"nohup {hermes_bin} chat -q \"$(cat {prompt_file})\" -Q --yolo"
+            f"nohup {hermes_python} -u {hermes_main} chat -q \"$(cat {prompt_file})\" -Q --yolo"
             f" > {log_file} 2>&1 &"
             f" echo $!"
         )
