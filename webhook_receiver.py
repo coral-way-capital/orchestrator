@@ -732,15 +732,14 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         prompt_file.write_text(rendered)
 
         # Build the hermes command
-        # Use hermes chat -q (non-interactive) with hermes venv
+        # PYTHONUNBUFFERED=1 forces live output to log file (otherwise Python buffers when not a TTY)
         hermes_bin = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "hermes"
         log_file = Path(tempfile.mktemp(suffix=".log", prefix=f"agent-{safe_id}-"))
 
-        # Read prompt from file to avoid shell quoting issues
         cmd = (
             f"cd {local_path} && "
-            f"GITHUB_TOKEN={os.environ.get('GITHUB_TOKEN', '')} "
-            f"nohup {hermes_bin} chat -q \"$(cat {prompt_file})\" -Q"
+            f"PYTHONUNBUFFERED=1 GITHUB_TOKEN={os.environ.get('GITHUB_TOKEN', '')} "
+            f"nohup {hermes_bin} chat -q \"$(cat {prompt_file})\" -Q --yolo"
             f" > {log_file} 2>&1 &"
             f" echo $!"
         )
