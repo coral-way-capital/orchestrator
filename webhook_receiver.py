@@ -732,6 +732,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         safe_id = item_id.replace("/", "_").replace("#", "-")
         prompt_file = Path(tempfile.mktemp(suffix=".md", prefix=f"dispatch-{safe_id}-"))
         prompt_file.write_text(rendered)
+        if not prompt_file.exists():
+            return {"error": f"Failed to write prompt file: {prompt_file}"}, 500
 
         # Build the hermes command
         # Use python -u (unbuffered) directly for live log output
