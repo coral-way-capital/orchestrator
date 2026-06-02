@@ -713,7 +713,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     save_queue(queue)
                     item = i
                     break
-            return {"error": f"Item {item_id} not found in pending"}, 404
+            if not item:
+                return {"error": f"Item {item_id} not found in pending"}, 404
 
         # Move to in_progress
         item["started_at"] = datetime.now(timezone.utc).isoformat()
