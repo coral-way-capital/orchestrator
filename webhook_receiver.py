@@ -448,6 +448,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
 
     def _parse_qs(self):
         """Parse query string into dict."""
+        from urllib.parse import unquote_plus
         if "?" not in self.path:
             return {}
         qs = self.path.split("?", 1)[1]
@@ -455,7 +456,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         for part in qs.split("&"):
             if "=" in part:
                 k, v = part.split("=", 1)
-                params[k] = v
+                params[k] = unquote_plus(v)
         return params
 
     def _serve_file(self, filepath, content_type=None):
