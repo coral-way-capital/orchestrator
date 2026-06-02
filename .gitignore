@@ -1,0 +1,11 @@
+# Secrets
+webhook-secret
+
+# Runtime data (large JSON queues, SQLite events)
+queue.json
+decompose-queue.json
+events.db
+
+# Python cache
+__pycache__/
+*.pyc

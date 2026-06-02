@@ -1,0 +1,15 @@
+[Unit]
+Description=CWC Issue Webhook Receiver
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/deploy/.hermes/issue-queue/webhook_receiver.py
+Restart=always
+RestartSec=5
+Environment=PORT=8646
+WorkingDirectory=/home/deploy/.hermes/issue-queue
+User=deploy
+
+[Install]
+WantedBy=multi-user.target

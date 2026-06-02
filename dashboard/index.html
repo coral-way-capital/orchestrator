@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CWC Mission Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ═══ CWC Design Tokens — Light (default) ═══ */
+  :root {
+    /* Surfaces */
+    --bg:                       #fafafa;
+    --bg-nav:                   rgba(250,250,250,0.85);
+    --bg-mobile-menu:           rgba(250,250,250,0.97);
+
+    /* Text */
+    --text:                     #09090b;
+    --text-secondary:           #52525b;
+    --text-muted:               #71717a;
+    --text-dim:                 #a1a1aa;
+    --text-faint:               #d4d4d8;
+
+    /* Brand accents */
+    --accent:                   #7c3aed;
+    --accent-hover:             #6d28d9;
+    --accent-secondary:         #0891b2;
+    --gradient:                 linear-gradient(135deg, #7c3aed 0%, #0891b2 100%);
+
+    /* Borders */
+    --border:                   rgba(0,0,0,0.08);
+    --border-light:             rgba(0,0,0,0.04);
+    --border-lighter:           rgba(0,0,0,0.12);
+    --border-accent:            rgba(124,58,237,0.2);
+    --border-accent-strong:     rgba(124,58,237,0.3);
+
+    /* Cards */
+    --card-bg:                  rgba(0,0,0,0.02);
+    --card-bg-hover:            rgba(0,0,0,0.04);
+    --card-bg-accent:           rgba(124,58,237,0.04);
+    --card-bg-accent-hover:     rgba(124,58,237,0.06);
+
+    /* Status colors */
+    --status-live-bg:           rgba(22,163,74,0.08);
+    --status-live-text:         #16a34a;
+    --status-live-border:       rgba(22,163,74,0.2);
+    --status-idle-bg:           rgba(124,58,237,0.08);
+    --status-idle-text:         #7c3aed;
+    --status-idle-border:       rgba(124,58,237,0.2);
+
+    /* Semantic */
+    --color-pending:            #7c3aed;
+    --color-progress:           #ca8a04;
+    --color-done:               #16a34a;
+    --color-fail:               #dc2626;
+    --color-info:               #0891b2;
+
+    /* Buttons */
+    --btn-primary-bg:           #09090b;
+    --btn-primary-text:         #fafafa;
+    --btn-primary-hover:        #27272a;
+
+    /* Misc */
+    --shadow-sm:                0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md:                0 4px 12px rgba(0,0,0,0.06);
+  }
+
+  /* ═══ Dark Mode (opt-in) ═══ */
+  [data-theme="dark"] {
+    --bg:                       #09090b;
+    --bg-nav:                   rgba(9,9,11,0.85);
+    --bg-mobile-menu:           rgba(9,9,11,0.97);
+
+    --text:                     #fafafa;
+    --text-secondary:           #a1a1aa;
+    --text-muted:               #71717a;
+    --text-dim:                 #52525b;
+    --text-faint:               #3f3f46;
+
+    --accent:                   #a78bfa;
+    --accent-hover:             #c4b5fd;
+    --accent-secondary:         #06b6d4;
+    --gradient:                 linear-gradient(135deg, #a78bfa 0%, #06b6d4 100%);
+
+    --border:                   rgba(255,255,255,0.06);
+    --border-light:             rgba(255,255,255,0.04);
+    --border-lighter:           rgba(255,255,255,0.08);
+    --border-accent:            rgba(167,139,250,0.2);
+    --border-accent-strong:     rgba(167,139,250,0.3);
+
+    --card-bg:                  rgba(255,255,255,0.02);
+    --card-bg-hover:            rgba(255,255,255,0.04);
+    --card-bg-accent:           rgba(167,139,250,0.03);
+    --card-bg-accent-hover:     rgba(167,139,250,0.04);
+
+    --status-live-bg:           rgba(34,197,94,0.1);
+    --status-live-text:         #22c55e;
+    --status-live-border:       rgba(34,197,94,0.2);
+    --status-idle-bg:           rgba(167,139,250,0.1);
+    --status-idle-text:         #a78bfa;
+    --status-idle-border:       rgba(167,139,250,0.2);
+
+    --color-pending:            #a78bfa;
+    --color-progress:           #eab308;
+    --color-done:               #22c55e;
+    --color-fail:               #f87171;
+    --color-info:               #06b6d4;
+
+    --btn-primary-bg:           #fafafa;
+    --btn-primary-text:         #09090b;
+    --btn-primary-hover:        #e4e4e7;
+
+    --shadow-sm:                0 1px 2px rgba(0,0,0,0.2);
+    --shadow-md:                0 4px 12px rgba(0,0,0,0.3);
+  }
+
+  /* ═══ Reset & Base ═══ */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ═══ Nav ═══ */
+  .header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    padding: 1rem 2rem;
+    background: var(--bg-nav);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header-left { display: flex; align-items: center; gap: 1rem; }
+  .logo {
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .logo-mark {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    background: var(--gradient);
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  .logo-accent { color: var(--accent); }
+
+  .status-badge {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .status-live {
+    background: var(--status-live-bg);
+    color: var(--status-live-text);
+    border: 1px solid var(--status-live-border);
+  }
+  .status-idle {
+    background: var(--status-idle-bg);
+    color: var(--status-idle-text);
+    border: 1px solid var(--status-idle-border);
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--status-live-text);
+    animation: pulse 2s ease infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* Theme toggle */
+  .theme-toggle {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    transition: all 0.2s;
+    color: var(--text-secondary);
+  }
+  .theme-toggle:hover {
+    border-color: var(--border-accent);
+    background: var(--card-bg-hover);
+  }
+
+  /* ═══ Tabs ═══ */
+  .tabs {
+    padding: 0 2rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+  }
+  .tab {
+    padding: 0.75rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .tab:hover { color: var(--text-secondary); }
+  .tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+  .tab .badge {
+    font-size: 0.65rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    background: var(--card-bg);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    font-weight: 600;
+  }
+
+  /* ═══ Content ═══ */
+  .content {
+    padding: 1.5rem 2rem;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  /* ═══ Stats Bar ═══ */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+  .stat-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    transition: border-color 0.3s, background 0.3s;
+  }
+  .stat-card:hover {
+    border-color: var(--border-accent);
+    background: var(--card-bg-hover);
+  }
+  .stat-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--text-muted);
+    margin-bottom: 0.4rem;
+  }
+  .stat-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+  }
+  .stat-sub {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    margin-top: 0.2rem;
+  }
+  .c-pending { color: var(--color-pending); }
+  .c-progress { color: var(--color-progress); }
+  .c-done { color: var(--color-done); }
+  .c-fail { color: var(--color-fail); }
+  .c-info { color: var(--color-info); }
+  .c-accent { color: var(--accent); }
+
+  /* ═══ Kanban ═══ */
+  .kanban {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+  .kanban-col {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    min-height: 300px;
+  }
+  .kanban-header {
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .kanban-count {
+    font-size: 0.65rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    background: var(--card-bg-accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .kanban-body { padding: 0.5rem; }
+  .kanban-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 0.875rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.8rem;
+    transition: border-color 0.2s, background 0.2s;
+    cursor: default;
+  }
+  .kanban-card:hover {
+    border-color: var(--border-accent);
+    background: var(--card-bg-hover);
+  }
+  .card-repo {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    margin-bottom: 0.25rem;
+    font-weight: 500;
+  }
+  .card-title {
+    color: var(--text);
+    line-height: 1.35;
+    font-weight: 500;
+  }
+  .card-meta {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-top: 0.4rem;
+    display: flex;
+    justify-content: space-between;
+  }
+  .card-labels { display: flex; gap: 0.25rem; margin-top: 0.4rem; flex-wrap: wrap; }
+  .label-tag {
+    font-size: 0.6rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    background: var(--card-bg-accent);
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .empty-col {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    text-align: center;
+    padding: 3rem 1rem;
+  }
+
+  /* ═══ Activity Timeline ═══ */
+  .timeline { max-width: 900px; }
+  .tl-item {
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 0.8rem;
+    align-items: flex-start;
+  }
+  .tl-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    flex-shrink: 0;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+  }
+  .tl-icon.ev-enqueued { background: rgba(124,58,237,0.08); border-color: rgba(124,58,237,0.15); }
+  .tl-icon.ev-claimed { background: rgba(202,138,4,0.08); border-color: rgba(202,138,4,0.15); }
+  .tl-icon.ev-completed { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.15); }
+  .tl-icon.ev-failed { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.15); }
+  .tl-icon.ev-guard { background: var(--card-bg-accent); border-color: var(--border-accent); }
+  .tl-content { flex: 1; min-width: 0; }
+  .tl-title { color: var(--text); font-weight: 500; }
+  .tl-title code {
+    background: var(--card-bg);
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    border: 1px solid var(--border);
+  }
+  .tl-detail { color: var(--text-muted); font-size: 0.7rem; margin-top: 0.15rem; }
+  .tl-time { color: var(--text-dim); font-size: 0.7rem; white-space: nowrap; }
+
+  /* ═══ Metrics ═══ */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+  .metric-panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+  }
+  .metric-panel h3 {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    font-weight: 600;
+  }
+  .metric-big {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+  }
+  .metric-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 0.8rem;
+  }
+  .metric-row:last-child { border: none; }
+  .bar-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 80px;
+    margin-top: 0.5rem;
+  }
+  .bar {
+    flex: 1;
+    min-width: 8px;
+    border-radius: 3px 3px 0 0;
+    background: var(--accent);
+    opacity: 0.5;
+    transition: opacity 0.15s;
+  }
+  .bar:hover { opacity: 1; }
+
+  /* ═══ Guards ═══ */
+  .guard-list { max-width: 900px; }
+  .guard-item {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.875rem 1rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: border-color 0.2s;
+  }
+  .guard-item:hover { border-color: var(--border-accent); }
+  .guard-type {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    background: var(--card-bg-accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* ═══ Decompose Tree ═══ */
+  .tree { max-width: 900px; }
+  .tree-node {
+    border-left: 2px solid var(--border);
+    margin-left: 1rem;
+    padding-left: 1rem;
+    margin-bottom: 0.5rem;
+  }
+  .tree-root { margin-left: 0; border-left: none; padding-left: 0; }
+  .tree-label { font-size: 0.85rem; padding: 0.4rem 0; font-weight: 500; }
+  .tree-child { font-size: 0.8rem; color: var(--text-secondary); }
+
+  /* ═══ Loading ═══ */
+  .loading {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+  }
+
+  /* ═══ Responsive ═══ */
+  @media (max-width: 768px) {
+    .kanban { grid-template-columns: repeat(2, 1fr); }
+    .metrics-grid { grid-template-columns: 1fr; }
+    .header { padding: 0.875rem 1.5rem; }
+    .tabs { padding: 0 1.5rem; }
+    .content { padding: 1rem 1.5rem; }
+  }
+  @media (max-width: 480px) {
+    .kanban { grid-template-columns: 1fr; }
+    .stats-bar { grid-template-columns: repeat(2, 1fr); }
+    .header { padding: 0.75rem 1rem; }
+    .tabs { padding: 0 1rem; }
+    .content { padding: 0.75rem 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<script type="module">
+import { h, render, Component } from 'https://esm.sh/preact@10.19.3';
+import { useState, useEffect, useCallback } from 'https://esm.sh/preact@10.19.3/hooks';
+import htm from 'https://esm.sh/htm@3.1.1';
+
+const html = htm.bind(h);
+
+const API = '';
+const POLL_MS = 5000;
+
+const TABS = [
+  { id: 'kanban', label: 'Kanban', icon: '\u25A3' },
+  { id: 'activity', label: 'Activity', icon: '\u26A1' },
+  { id: 'metrics', label: 'Metrics', icon: '\u2587' },
+  { id: 'guards', label: 'Guards', icon: '\u25C8' },
+  { id: 'tree', label: 'Decompose', icon: '\u251C' },
+];
+
+const EVENT_ICONS = {
+  'issue.enqueued': '\u2193', 'issue.claimed': '\u2192', 'issue.completed': '\u2713',
+  'issue.failed': '\u2717', 'issue.retried': '\u21BB', 'issue.reset': '\u00D7',
+  'webhook.received': '\u25C9', 'webhook.classified': '\u25B8',
+  'decompose.enqueued': '\u25A3', 'decompose.child_created': '\u25AA',
+  'decompose.completed': '\u2713', 'decompose.failed': '\u2717',
+  'guard.triggered': '\u25C8', 'worker.dispatched': '\u25B8',
+  'worker.completed': '\u2713', 'worker.failed': '\u26A0',
+};
+
+const EVENT_COLORS = {
+  'issue.enqueued': 'ev-enqueued', 'issue.claimed': 'ev-claimed',
+  'issue.completed': 'ev-completed', 'issue.failed': 'ev-failed',
+  'guard.triggered': 'ev-guard',
+};
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  try {
+    const d = new Date(ts.replace('Z', ''));
+    const s = Math.floor((Date.now() - d) / 1000);
+    if (s < 0) return new Date(ts.replace('Z', '')).toLocaleDateString();
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s/60) + 'm ago';
+    if (s < 86400) return Math.floor(s/3600) + 'h ago';
+    return Math.floor(s/86400) + 'd ago';
+  } catch { return ''; }
+}
+
+function shortRepo(repo) {
+  return repo ? repo.split('/')[1] : '?';
+}
+
+function formatNum(n) {
+  if (n === null || n === undefined) return '\u2014';
+  return n.toLocaleString();
+}
+
+// ─── Theme Toggle ───
+function initTheme() {
+  const stored = localStorage.getItem('mc-theme');
+  if (stored === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+}
+initTheme();
+
+function toggleTheme() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  if (isDark) {
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.setItem('mc-theme', 'light');
+  } else {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    localStorage.setItem('mc-theme', 'dark');
+  }
+}
+
+// ─── API hooks ───
+function useFetch(path, deps = []) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch(API + path);
+      if (!r.ok) throw new Error(r.status);
+      setData(await r.json());
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [path]);
+
+  useEffect(() => { load(); const i = setInterval(load, POLL_MS); return () => clearInterval(i); }, [load]);
+  return { data, loading, error, refresh: load };
+}
+
+// ─── Components ───
+
+function Header({ queue }) {
+  const ip = queue?.in_progress?.length || 0;
+  const total = queue ? (queue.pending?.length || 0) + ip + (queue.completed?.length || 0) + (queue.failed?.length || 0) : 0;
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  return html`
+    <div class="header">
+      <div class="header-left">
+        <div class="logo">
+          <span class="logo-mark"></span>
+          Mission <span class="logo-accent">Control</span>
+        </div>
+        <span class="status-badge ${ip > 0 ? 'status-live' : 'status-idle'}">
+          ${ip > 0 ? '\u25CF Processing' : '\u25CB Idle'}
+        </span>
+      </div>
+      <div class="header-right">
+        <div class="live-dot"></div>
+        <span>Live \u00B7 ${total} tracked</span>
+        <button class="theme-toggle" onClick=${toggleTheme} title="Toggle theme">
+          ${isDark ? '\u2600' : '\u263D'}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function TabBar({ active, onSwitch, counts }) {
+  return html`
+    <div class="tabs">
+      ${TABS.map(t => html`
+        <div class="tab ${active === t.id ? 'active' : ''}" onClick=${() => onSwitch(t.id)}>
+          ${t.icon} ${t.label}
+          ${counts[t.id] ? html`<span class="badge">${counts[t.id]}</span>` : null}
+        </div>
+      `)}
+    </div>
+  `;
+}
+
+function StatsBar({ queue, stats }) {
+  const q = queue || {};
+  return html`
+    <div class="stats-bar">
+      <div class="stat-card">
+        <div class="stat-label">Pending</div>
+        <div class="stat-value c-pending">${formatNum(q.pending?.length)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">In Progress</div>
+        <div class="stat-value c-progress">${formatNum(q.in_progress?.length)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Completed</div>
+        <div class="stat-value c-done">${formatNum(q.completed?.length)}</div>
+        <div class="stat-sub">all time</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Failed</div>
+        <div class="stat-value c-fail">${formatNum(q.failed?.length)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Cycle</div>
+        <div class="stat-value c-info">${stats?.avg_cycle_time_minutes ? stats.avg_cycle_time_minutes + 'm' : '\u2014'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Events 24h</div>
+        <div class="stat-value c-accent">${formatNum(stats?.total_events_last_24h)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function KanbanView({ queue }) {
+  if (!queue) return html`<div class="loading">Loading queue...</div>`;
+  const cols = [
+    { key: 'pending', label: 'Pending', color: 'c-pending', icon: '\u2193' },
+    { key: 'in_progress', label: 'In Progress', color: 'c-progress', icon: '\u2192' },
+    { key: 'completed', label: 'Completed', color: 'c-done', icon: '\u2713' },
+    { key: 'failed', label: 'Failed', color: 'c-fail', icon: '\u2717' },
+  ];
+
+  return html`
+    <div class="kanban">
+      ${cols.map(col => html`
+        <div class="kanban-col">
+          <div class="kanban-header">
+            <span>${col.icon} ${col.label}</span>
+            <span class="kanban-count">${queue[col.key]?.length || 0}</span>
+          </div>
+          <div class="kanban-body">
+            ${(queue[col.key] || []).length === 0 ?
+              html`<div class="empty-col">No items</div>` :
+              (queue[col.key] || []).slice(0, 20).map(item => html`
+                <div class="kanban-card">
+                  <div class="card-repo">${shortRepo(item.repo)}#${item.issue_number}</div>
+                  <div class="card-title">${item.title || 'Untitled'}</div>
+                  <div class="card-labels">
+                    ${(item.labels || []).slice(0, 3).map(l => html`<span class="label-tag">${l}</span>`)}
+                  </div>
+                  <div class="card-meta">
+                    <span>${col.key === 'completed' && item.pr_number ? 'PR #' + item.pr_number : timeAgo(item.enqueued_at)}</span>
+                    <span>${item.author || ''}</span>
+                  </div>
+                </div>
+              `)
+            }
+          </div>
+        </div>
+      `)}
+    </div>
+  `;
+}
+
+function ActivityView({ events }) {
+  if (!events) return html`<div class="loading">Loading events...</div>`;
+
+  return html`
+    <div class="timeline">
+      ${events.map(e => {
+        const icon = EVENT_ICONS[e.event_type] || '\u25CF';
+        const color = EVENT_COLORS[e.event_type] || '';
+        const details = typeof e.details === 'string' ? JSON.parse(e.details || '{}') : (e.details || {});
+        return html`
+          <div class="tl-item">
+            <div class="tl-icon ${color}">${icon}</div>
+            <div class="tl-content">
+              <div class="tl-title">
+                <strong>${e.event_type}</strong>
+                ${e.item_id ? html` \u00B7 <code>${e.item_id}</code>` : ''}
+              </div>
+              <div class="tl-detail">
+                ${e.title ? e.title.slice(0, 80) : ''}
+                ${details.error ? html` \u00B7 <span style="color:var(--color-fail)">Error: ${details.error.slice(0, 60)}</span>` : ''}
+                ${details.guard ? html` \u00B7 <span style="color:var(--accent)">Guard: ${details.guard}</span>` : ''}
+                ${details.pr_number ? html` \u00B7 PR #${details.pr_number}` : ''}
+                ${details.size ? html` \u00B7 ${details.size}` : ''}
+              </div>
+            </div>
+            <div class="tl-time">${timeAgo(e.timestamp)}</div>
+          </div>
+        `;
+      })}
+    </div>
+  `;
+}
+
+function MetricsView({ stats }) {
+  if (!stats) return html`<div class="loading">Loading metrics...</div>`;
+  const byType = stats.events_by_type || {};
+  const byRepo = stats.events_by_repo || {};
+  const hourly = stats.hourly_activity || [];
+  const maxH = Math.max(...hourly.map(h => h.count), 1);
+
+  return html`
+    <div class="metrics-grid">
+      <div class="metric-panel">
+        <h3>Throughput</h3>
+        <div class="metric-big c-info">${stats.avg_cycle_time_minutes || '\u2014'}<span style="font-size:0.9rem;color:var(--text-muted)"> min avg</span></div>
+        <div style="margin-top:0.25rem;font-size:0.75rem;color:var(--text-muted)">
+          Median: ${stats.median_cycle_time_minutes || '\u2014'} min
+          \u00B7 Completed (7d): ${byType['issue.completed'] || 0}
+          \u00B7 Failed (7d): ${byType['issue.failed'] || 0}
+        </div>
+      </div>
+
+      <div class="metric-panel">
+        <h3>Hourly Activity (24h)</h3>
+        <div class="bar-chart">
+          ${hourly.map(h => html`
+            <div class="bar" style="height:${(h.count/maxH)*100}%" title="${h.hour}: ${h.count} events"></div>
+          `)}
+        </div>
+      </div>
+
+      <div class="metric-panel">
+        <h3>Event Types (7d)</h3>
+        ${Object.entries(byType).sort((a,b) => b[1]-a[1]).slice(0, 10).map(([k, v]) => html`
+          <div class="metric-row">
+            <span>${EVENT_ICONS[k] || '\u25CF'} ${k}</span>
+            <span>${v}</span>
+          </div>
+        `)}
+      </div>
+
+      <div class="metric-panel">
+        <h3>By Repo (7d)</h3>
+        ${Object.entries(byRepo).sort((a,b) => b[1]-a[1]).map(([k, v]) => html`
+          <div class="metric-row">
+            <span>${shortRepo(k)}</span>
+            <span>${v}</span>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function GuardsView({ stats }) {
+  if (!stats) return html`<div class="loading">Loading guard data...</div>`;
+  const guards = stats.guard_triggers || [];
+
+  return html`
+    <div class="guard-list">
+      <div style="margin-bottom:1rem;font-size:0.8rem;color:var(--text-muted)">
+        Guards fire when a rule or safety check activates. Showing triggers from the last 7 days.
+      </div>
+      ${guards.length === 0 ?
+        html`<div class="empty-col" style="padding:3rem">No guard triggers in the last 7 days</div>` :
+        guards.map(g => {
+          const details = typeof g.details === 'string' ? JSON.parse(g.details || '{}') : (g.details || {});
+          return html`
+            <div class="guard-item">
+              <div>
+                <div style="font-size:0.8rem;font-weight:500">${details.guard || 'Unknown guard'}</div>
+                <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.15rem">
+                  ${details.reason || ''}
+                </div>
+              </div>
+              <div class="guard-type">${g.count}\u00D7</div>
+            </div>
+          `;
+        })
+      }
+    </div>
+  `;
+}
+
+function TreeView({ data }) {
+  if (!data) return html`<div class="loading">Loading decompose tree...</div>`;
+  if (data.length === 0) return html`<div class="empty-col" style="padding:3rem">No decomposition records yet</div>`;
+
+  return html`
+    <div class="tree">
+      ${data.map(root => html`
+        <div class="tree-node tree-root">
+          <div class="tree-label">
+            <strong style="color:var(--accent)">${root.title || root.id}</strong>
+            <span style="color:var(--text-dim);font-size:0.7rem;margin-left:0.5rem">
+              ${root.children?.length || 0} children
+            </span>
+          </div>
+          ${(root.children || []).map(child => html`
+            <div class="tree-node">
+              <div class="tree-child">${child.title || child.id}</div>
+            </div>
+          `)}
+        </div>
+      `)}
+    </div>
+  `;
+}
+
+// ─── Main App ───
+
+function App() {
+  const [tab, setTab] = useState('kanban');
+  const queue = useFetch('/api/queue');
+  const events = useFetch('/api/events?limit=50');
+  const stats = useFetch('/api/stats');
+  const tree = useFetch('/api/decompose-tree');
+
+  const counts = {
+    kanban: queue.data ? (queue.data.pending?.length || 0) + (queue.data.in_progress?.length || 0) : 0,
+    activity: events.data?.length || 0,
+    guards: stats.data?.guard_triggers?.length || 0,
+    tree: tree.data?.length || 0,
+  };
+
+  return html`
+    <${Header} queue=${queue.data} />
+    <${TabBar} active=${tab} onSwitch=${setTab} counts=${counts} />
+    <div class="content">
+      <${StatsBar} queue=${queue.data} stats=${stats.data} />
+      ${tab === 'kanban' && html`<${KanbanView} queue=${queue.data} />`}
+      ${tab === 'activity' && html`<${ActivityView} events=${events.data} />`}
+      ${tab === 'metrics' && html`<${MetricsView} stats=${stats.data} />`}
+      ${tab === 'guards' && html`<${GuardsView} stats=${stats.data} />`}
+      ${tab === 'tree' && html`<${TreeView} data=${tree.data} />`}
+    </div>
+  `;
+}
+
+render(html`<${App} />`, document.getElementById('app'));
+</script>
+</body>
+</html>
