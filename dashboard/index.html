@@ -867,6 +867,19 @@
   }
   .dispatch-btn:hover { opacity: 0.85; }
   .dispatch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .finish-btn {
+    padding: 0.5rem 1.25rem;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .finish-btn:hover { background: var(--accent); color: var(--bg); }
+  .finish-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .dispatch-desc { font-size: 0.7rem; color: var(--text-muted); margin: 0.5rem 0 0 0; }
 
   .agent-info { display: flex; gap: 1rem; font-size: 0.8rem; color: var(--text-muted); flex-wrap: wrap; margin-bottom: 0.75rem; }
@@ -1585,7 +1598,7 @@ function AgentLogViewer({ item }) {
   `;
 }
 
-function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatching }) {
+function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, onFinish, dispatching }) {
   if (!item) return null;
   const [selectedPrompt, setSelectedPrompt] = useState('default');
 
@@ -1672,6 +1685,13 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, dispatchi
           <div class="modal-dispatch">
             <${AgentLogViewer} item=${item} />
             <div class="dispatch-row" style="margin-top:0.75rem">
+              <button
+                class="finish-btn"
+                disabled=${dispatching}
+                onClick=${() => onFinish(item.id)}
+              >
+                ${dispatching ? '\u21BB Finishing...' : '\u2713 Finish (commit + PR)'}
+              </button>
               <select class="dispatch-select" value=${selectedPrompt} onChange=${e => setSelectedPrompt(e.target.value)}>
                 ${(prompts || []).map(p => html`<option value=${p.id}>${p.name}</option>`)}
               </select>
@@ -1894,6 +1914,30 @@ function App() {
     }
   }
 
+  async function finishAgent(itemId) {
+    setDispatching(true);
+    try {
+      const r = await fetch(API + '/api/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: itemId }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+      const summary = (d.actions || []).join(' \u2192 ');
+      if (d.pr_url) {
+        showToast(`Finished! ${summary}`, 'success');
+      } else {
+        showToast(d.message || d.action || 'Nothing to do', 'info');
+      }
+      queue.refresh();
+    } catch (e) {
+      showToast('Finish failed: ' + e.message, 'error');
+    } finally {
+      setDispatching(false);
+    }
+  }
+
   return html`
     <${Header} queue=${queue.data} />
     <${TabBar} active=${tab} onSwitch=${setTab} counts=${counts} />
@@ -1948,6 +1992,7 @@ function App() {
         prompts=${prompts.data}
         onClose=${closeModal}
         onDispatch=${dispatchAgent}
+        onFinish=${finishAgent}
         dispatching=${dispatching}
       />
     `}

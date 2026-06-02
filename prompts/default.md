@@ -29,5 +29,8 @@ You are an autonomous coding agent. Your job is to fully implement the following
 ## Important
 
 - Do NOT push to main. Always create a feature branch.
-- Run type checks and linting if the project has them configured.
+- **Lint is mandatory** — after making all changes, you MUST run the project's linter and type checker (e.g. `bun run lint`, `bun run typecheck`, `biome check`, `tsc --noEmit`). If YOUR changes introduce lint/type errors, fix them before committing. Do NOT skip this step.
+- **Pre-existing errors**: If `git commit` fails due to errors in files you did NOT modify, use `git commit --no-verify`. But if the errors are in YOUR files, fix them first.
+- **Verify before commit**: Run `git diff --name-only` to see what you changed, then run lint/typecheck. Only commit when your files are clean.
 - If you encounter blockers, document them in the PR body.
+- **Finish the job**: You MUST commit, push, and create a PR. Uncommitted work on a local branch is a failure state. If you can't open a PR, explain why in a GitHub issue comment using `gh issue comment`.
