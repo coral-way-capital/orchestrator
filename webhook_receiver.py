@@ -708,12 +708,13 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
 
         # Write prompt to temp file so pi can read it
         import tempfile
-        prompt_file = Path(tempfile.mktemp(suffix=".md", prefix=f"dispatch-{item_id}-"))
+        safe_id = item_id.replace("/", "_").replace("#", "-")
+        prompt_file = Path(tempfile.mktemp(suffix=".md", prefix=f"dispatch-{safe_id}-"))
         prompt_file.write_text(rendered)
 
         # Build the pi command
         # Run pi in non-interactive mode, cd into the repo, with the rendered prompt
-        log_file = Path(tempfile.mktemp(suffix=".log", prefix=f"agent-{item_id}-"))
+        log_file = Path(tempfile.mktemp(suffix=".log", prefix=f"agent-{safe_id}-"))
 
         cmd = (
             f"cd {local_path} && "
