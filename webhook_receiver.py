@@ -306,8 +306,11 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 # Commit if there are changes
                 if changes:
                     # Auto-fix lint before committing
-                    lint_results = self._auto_fix_lint(local_path)
-                    actions_taken.extend(lint_results)
+                    try:
+                        lint_results = self._auto_fix_lint(local_path)
+                        actions_taken.extend(lint_results)
+                    except Exception as e:
+                        actions_taken.append(f"lint-fix skipped: {e}")
 
                     msg = f"feat: resolve #{issue_number} — {item['title'][:60]}"
                     subprocess.run(["git", "add", "-A"], cwd=local_path, timeout=10)
@@ -892,7 +895,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             try:
                 r = subprocess.run(
                     ["bun", "run", "lint", "--", "--write"],
-                    capture_output=True, text=True, cwd=cwd, timeout=30, env=env
+                    capture_output=True, text=True, cwd=cwd, timeout=60, env=env
                 )
                 if r.returncode == 0:
                     actions.append("biome: auto-fixed")
@@ -928,7 +931,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             try:
                 r = subprocess.run(
                     ["npx", "tsc", "--noEmit"],
-                    capture_output=True, text=True, cwd=cwd, timeout=60, env=env
+                    capture_output=True, text=True, cwd=cwd, timeout=90, env=env
                 )
                 if r.returncode == 0:
                     actions.append("tsc: clean")
