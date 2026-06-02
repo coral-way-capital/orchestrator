@@ -443,10 +443,12 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             # Find the item across all queue lists
             q = load_queue_json()
             item = None
+            source_list_name = None
             for lst in ("pending", "in_progress", "completed", "failed"):
                 for i in q.get(lst, []):
                     if i["id"] == item_id:
                         item = i
+                        source_list_name = lst
                         break
                 if item:
                     break
