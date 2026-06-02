@@ -479,6 +479,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                         if size > tail_bytes:
                             f.seek(size - tail_bytes)
                             f.readline()  # skip partial first line
+                        else:
+                            f.seek(0)
                         result["log_tail"] = f.read().decode("utf-8", errors="replace")
                 except Exception as e:
                     result["log_tail"] = f"Error reading log: {e}"
