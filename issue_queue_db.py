@@ -109,24 +109,64 @@ def _ensure_columns(db, table, columns):
             db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
+PRIORITY_LABEL_SCORES = {
+    "priority:critical": 100,
+    "priority:p0": 100,
+    "p0": 100,
+    "critical": 100,
+    "sev0": 100,
+    "sev1": 100,
+    "priority:high": 85,
+    "priority:p1": 85,
+    "p1": 85,
+    "high": 85,
+    "priority:medium": 65,
+    "priority:p2": 65,
+    "p2": 65,
+    "medium": 65,
+    "priority:low": 35,
+    "priority:p3": 35,
+    "p3": 35,
+    "low": 35,
+}
+
+
 def compute_priority(item):
     labels = {str(x).lower() for x in item.get("labels", [])}
     title = (item.get("title") or "").lower()
     body = (item.get("body") or "").lower()
-    score = 50
-    if labels & {"p0", "critical", "sev0", "sev1"}:
-        score += 50
-    if labels & {"p1", "high", "bug"}:
-        score += 25
-    if labels & {"client", "customer", "production", "prod"}:
-        score += 20
-    if labels & {"docs", "question", "discussion"}:
-        score -= 40
+
+    explicit = [PRIORITY_LABEL_SCORES[label] for label in labels if label in PRIORITY_LABEL_SCORES]
+    if explicit:
+        score = max(explicit)
+    else:
+        score = 50
+        if labels & {"bug"}:
+            score += 25
+        if labels & {"client", "customer", "production", "prod"}:
+            score += 20
+        if labels & {"docs", "question", "discussion", "documentation"}:
+            score -= 10
+
     if any(k in title for k in ("bug", "broken", "production", "prod", "cliente", "client")):
         score += 10
     if any(k in body for k in ("acceptance criteria", "criterios de aceptación")):
         score += 5
     return max(0, min(100, score))
+
+
+def issue_order_value(item):
+    """Stable definition order: lower GitHub issue number means defined earlier."""
+    try:
+        number = item.get("issue_number")
+        return int(number) if number is not None else 10**9
+    except (TypeError, ValueError):
+        return 10**9
+
+
+def priority_sort_key(item):
+    """Sort key for dispatch: explicit priority first, then first-defined order."""
+    return (-compute_priority(item), issue_order_value(item), item.get("enqueued_at") or "")
 
 
 def upsert_issue(db, item, status):

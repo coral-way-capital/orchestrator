@@ -361,7 +361,7 @@ def next_pending(n=1):
     # preserving enqueue order inside equal priority bands.
     try:
         import issue_queue_db
-        pending_items = sorted(list(queue["pending"]), key=lambda i: (-issue_queue_db.compute_priority(i), i.get("enqueued_at") or ""))
+        pending_items = sorted(list(queue["pending"]), key=issue_queue_db.priority_sort_key)
     except Exception:
         pending_items = list(queue["pending"])
 
