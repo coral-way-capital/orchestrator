@@ -31,8 +31,18 @@ from urllib.parse import unquote
 # Add parent to path for queue import
 BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, str(BASE_DIR))
-from queue import enqueue
+from queue import enqueue, is_issue_assigned_to_allowed, _assignee_logins, allowed_assignees, visible_unassigned_repos
+from eligibility import repo_diagnostics, evaluate_item
 from events import init_db, log_event, query_events, get_stats, get_decompose_tree
+from agent_traces import get_agent_trace_payload, ensure_trace_bundle, upsert_trace
+from worker_pools import WorkerPoolsManager
+from dispatch_telemetry import normalize_dispatch_telemetry
+try:
+    import issue_queue_db
+except Exception:
+    issue_queue_db = None
+
+_pool_mgr = WorkerPoolsManager(os.path.join(BASE_DIR, "worker_pools.json"))
 
 DASHBOARD_DIR = BASE_DIR / "dashboard"
 PROMPTS_DIR = BASE_DIR / "prompts"
@@ -49,6 +59,7 @@ REPO_MAP = {
     "coral-way-capital/sre": "/home/deploy/apps/sre",
     "coral-way-capital/client-status": "/home/deploy/apps/client-status",
     "coral-way-capital/diffusionZones": "/home/deploy/apps/diffusionZones",
+    "coral-way-capital/visit-merida-chatbot": "/home/deploy/apps/visit-merida-chatbot",
 }
 
 # Secret is shared with GitHub webhook config
@@ -57,8 +68,44 @@ QUEUE_DIR = BASE_DIR
 DECOMPOSE_QUEUE_FILE = QUEUE_DIR / "decompose-queue.json"
 QUEUE_FILE = QUEUE_DIR / "queue.json"
 HERMES_GATEWAY = os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8644")
+# The Hermes gateway has its own platform secret (different from the GitHub webhook secret).
+# Used for signing outgoing dispatch requests to the gateway.
+GATEWAY_SECRET_FILE = os.path.expanduser("~/.hermes/issue-queue/gateway-secret")
+GATEWAY_SECRET = os.environ.get("HERMES_GATEWAY_SECRET", "")  # loaded below
 EPIC_DECOMPOSER_ROUTE = "epic-decomposer"
 MAX_DECOMPOSE_PENDING = 10
+DEFAULT_DISPATCH_PROVIDER = os.environ.get("CWC_DISPATCH_PROVIDER", "openai-codex")
+DEFAULT_DISPATCH_MODEL = os.environ.get("CWC_DISPATCH_MODEL", "gpt-5.5")
+BLOCKED_DISPATCH_MODELS = {"glm-5-turbo"}
+
+
+def trigger_dispatcher_async(reason="enqueue"):
+    """Best-effort immediate drain after enqueue.
+
+    HTTPServer is single-threaded, so the background worker waits briefly before
+    calling /api/dispatch through the deterministic dispatcher. Cron remains the
+    watchdog; this is the low-latency path.
+    """
+    def _run():
+        time.sleep(0.5)
+        try:
+            subprocess.run(
+                [sys.executable, str(Path.home() / ".hermes" / "scripts" / "cwc-issue-dispatcher.py"), "--quiet"],
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+        except Exception as e:
+            log_event("dispatcher.trigger_failed", details={"reason": reason, "error": str(e)[:200]})
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def normalize_dispatch_model(provider=None, model=None):
+    provider = provider or DEFAULT_DISPATCH_PROVIDER
+    model = model or DEFAULT_DISPATCH_MODEL
+    if model in BLOCKED_DISPATCH_MODELS:
+        provider, model = "openai-codex", "gpt-5.5"
+    return provider, model
 
 # Initialize DB on module load
 init_db()
@@ -69,6 +116,14 @@ def load_secret():
         with open(SECRET_FILE) as f:
             return f.read().strip()
     return None
+
+
+def load_gateway_secret():
+    """Load the Hermes gateway platform secret for signing dispatch requests."""
+    if os.path.exists(GATEWAY_SECRET_FILE):
+        with open(GATEWAY_SECRET_FILE) as f:
+            return f.read().strip()
+    return GATEWAY_SECRET or None
 
 
 def verify_signature(payload_body, signature_header):
@@ -186,7 +241,7 @@ def enqueue_for_decomposition(repo, issue_number, title, body, author, labels, h
 
 
 def forward_to_hermes_gateway(payload_bytes):
-    secret = load_secret()
+    secret = load_gateway_secret() or load_secret()
     if not secret:
         print("WARN: No webhook secret, cannot forward to Hermes gateway")
         return
@@ -410,6 +465,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 return
             item_id = payload.get("item_id")
             prompt_id = payload.get("prompt_id")
+            model_provider, model_name = normalize_dispatch_model(payload.get("model_provider") or payload.get("provider"), payload.get("model"))
             if not item_id or not prompt_id:
                 self._json_response({"error": "item_id and prompt_id required"}, 400)
                 return
@@ -429,9 +485,29 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             if not item:
                 self._json_response({"error": f"Item {item_id} not found"}, 404)
                 return
+            existing = _pool_mgr.pool_for_repo(item["repo"])
+            eligibility = evaluate_item(
+                item,
+                queue_status=source_list_name or "pending",
+                active_repo_locks={w.get("repo") for w in _pool_mgr.active_workers() if w.get("repo")},
+            )
+            if source_list_name == "pending" and not eligibility.get("eligible"):
+                self._json_response({"error": "Item is not dispatch-eligible", "eligibility": eligibility}, 409)
+                return
+            # Allow dispatch when the only existing worker is for the SAME item
+            # (e.g. pre-registered by queue.py next_pending). Only block a
+            # DIFFERENT item in the same repo (same-repo serialization).
+            if existing and existing.get("item_id") != item_id:
+                self._json_response({
+                    "error": f"Worker pool for {item['repo']} already has an active worker ({existing.get('id')}).",
+                    "active_worker": existing,
+                }, 409)
+                return
+
             result, status = self._dispatch_agent(
                 item_id, item["repo"], item["issue_number"],
-                item["title"], item["body"], item["html_url"], prompt_id
+                item["title"], item["body"], item["html_url"], prompt_id,
+                model_provider=model_provider, model_name=model_name,
             )
             self._json_response(result, status)
             return
@@ -456,10 +532,11 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         event = self.headers.get("X-GitHub-Event", "")
         action = payload.get("action", "")
 
-        if event == "issues" and action == "opened":
+        if event == "issues" and action in {"opened", "assigned", "unassigned", "edited", "labeled", "unlabeled", "reopened"}:
             issue = payload.get("issue", {})
             repo = payload.get("repository", {}).get("full_name", "")
             labels = [l.get("name", "") for l in issue.get("labels", [])]
+            assignees = [a.get("login", "") for a in issue.get("assignees", [])]
             issue_body = issue.get("body", "") or ""
             title = issue.get("title", "")
             issue_number = issue.get("number", 0)
@@ -469,8 +546,36 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
 
             log_event("webhook.received", item_id=item_id, repo=repo,
                       issue_number=issue_number, title=title,
-                      details={"action": action, "author": author, "labels": labels},
+                      details={"action": action, "author": author, "labels": labels, "assignees": _assignee_logins(assignees)},
                       source="webhook")
+
+            # VISIBILITY / DISPATCH SPLIT: unassigned issues are allowed onto the
+            # board so Mission Control is a real repo dashboard. Dispatch remains
+            # protected by queue.next_pending(), which refuses to claim issues not
+            # assigned to allowed users.
+            assignee_allowed = is_issue_assigned_to_allowed(assignees)
+            unassigned_visible = repo in visible_unassigned_repos()
+            if not assignee_allowed and not unassigned_visible:
+                allowed = sorted(allowed_assignees())
+                log_event("guard.triggered", item_id=item_id, repo=repo,
+                          issue_number=issue_number, title=title,
+                          details={"guard": "allowed-assignee", "reason": "issue not assigned to allowed users", "assignees": _assignee_logins(assignees), "allowed": allowed},
+                          source="webhook")
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "skipped-unassigned",
+                    "reason": "issue is not assigned to allowed orchestrator users",
+                    "assignees": _assignee_logins(assignees),
+                    "allowed": allowed,
+                }).encode())
+                return
+            if not assignee_allowed:
+                allowed = sorted(allowed_assignees())
+                log_event("guard.triggered", item_id=item_id, repo=repo,
+                          issue_number=issue_number, title=title,
+                          details={"guard": "allowed-assignee", "reason": "visible but not dispatch-eligible", "assignees": _assignee_logins(assignees), "allowed": allowed},
+                          source="webhook")
 
             # RECURSION GUARD: epic-child label
             if "epic-child" in labels:
@@ -500,6 +605,32 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 }).encode())
                 return
 
+            # Non-open issue events are mutable projection updates. Refresh queue
+            # metadata, emit lifecycle events, and dispatch immediately if the
+            # issue became eligible.
+            if action != "opened":
+                enqueued = enqueue(
+                    repo=repo, issue_number=issue_number, title=title,
+                    body=issue_body, author=author, labels=labels, html_url=html_url,
+                    assignees=assignees,
+                    require_allowed_assignee=not unassigned_visible,
+                )
+                log_event("issue.projection_refreshed", item_id=item_id, repo=repo,
+                          issue_number=issue_number, title=title,
+                          details={"action": action, "assignees": _assignee_logins(assignees), "eligible": is_issue_assigned_to_allowed(assignees)},
+                          source="webhook")
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "projection-refreshed" if not enqueued else "enqueued",
+                    "action": action,
+                    "eligible": is_issue_assigned_to_allowed(assignees),
+                    "dispatch_triggered": is_issue_assigned_to_allowed(assignees),
+                }).encode())
+                if is_issue_assigned_to_allowed(assignees):
+                    trigger_dispatcher_async(f"github-webhook-{action}")
+                return
+
             # Classify issue size
             size, reason = classify_issue_size(issue_body)
             log_event("webhook.classified", item_id=item_id, repo=repo,
@@ -507,7 +638,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                       details={"size": size, "reason": reason},
                       source="webhook")
 
-            if size == "large":
+            if size == "large" and assignee_allowed:
                 decomposed = enqueue_for_decomposition(
                     repo=repo, issue_number=issue_number, title=title,
                     body=issue_body, author=author, labels=labels, html_url=html_url,
@@ -522,13 +653,18 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 enqueued = enqueue(
                     repo=repo, issue_number=issue_number, title=title,
                     body=issue_body, author=author, labels=labels, html_url=html_url,
+                    assignees=assignees,
+                    require_allowed_assignee=not unassigned_visible,
                 )
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(json.dumps({
                     "status": "enqueued" if enqueued else "skipped",
-                    "size": size, "reason": reason
+                    "size": size, "reason": reason,
+                    "dispatch_triggered": bool(enqueued),
                 }).encode())
+                if enqueued:
+                    trigger_dispatcher_async("github-webhook-enqueue")
         elif event == "ping":
             self.send_response(200)
             self.end_headers()
@@ -544,7 +680,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
 
         # API routes
         if path == "/api/queue":
-            self._json_response(load_queue_json())
+            self._json_response(self._queue_with_eligibility())
         elif path == "/api/queue-enriched":
             self._json_response(self._enriched_queue())
         elif path == "/api/decompose-queue":
@@ -568,6 +704,9 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             q = load_queue_json()
             repos = sorted(set(x["repo"] for x in q["pending"] + q["in_progress"] + q["completed"] + q["failed"]))
             self._json_response(repos)
+        elif path in ("/api/eligibility", "/api/why-not-working"):
+            params = self._parse_qs()
+            self._json_response(repo_diagnostics(params.get("repo")))
         elif path == "/api/issue":
             params = self._parse_qs()
             repo = params.get("repo")
@@ -603,6 +742,13 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         elif path == "/api/prompts":
             prompts = self._load_prompts()
             self._json_response(prompts)
+        elif path == "/api/agent-trace":
+            params = self._parse_qs()
+            item_id = params.get("item_id")
+            if not item_id:
+                self._json_response({"error": "item_id required"}, 400)
+                return
+            self._json_response(get_agent_trace_payload(item_id))
         elif path == "/api/agent-status":
             params = self._parse_qs()
             item_id = params.get("item_id")
@@ -624,29 +770,108 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             if not item:
                 self._json_response({"error": "item not found"}, 404)
                 return
+            worker = None
+            try:
+                matches = [w for w in _pool_mgr.workers() if w.get("item_id") == item_id]
+                worker = matches[0] if matches else None
+            except Exception:
+                worker = None
+            pid = item.get("agent_pid") or (worker or {}).get("pid") or (worker or {}).get("item_pid")
+            log_path = item.get("log_path") or (worker or {}).get("log_path")
+            legacy_log = item.get("agent_log")
+            if not log_path and legacy_log and (legacy_log.startswith("/") or legacy_log.startswith("~")):
+                log_path = legacy_log
+            telemetry_missing = item.get("telemetry_missing") or (worker or {}).get("telemetry_missing") or []
+            liveness_reliable = bool(item.get("liveness_reliable") or (worker or {}).get("liveness_reliable") or pid)
             result = {
                 "item_id": item_id,
                 "status": "unknown",
-                "pid": item.get("agent_pid"),
-                "log_file": item.get("agent_log"),
+                "pid": pid,
+                "agent_pid": pid,
+                "dispatch_id": item.get("dispatch_id") or (worker or {}).get("dispatch_id"),
+                "session_id": item.get("session_id") or (worker or {}).get("session_id"),
+                "log_path": log_path,
+                "log_file": log_path,
+                "transcript_path": item.get("transcript_path") or (worker or {}).get("transcript_path"),
+                "status_url": item.get("status_url") or (worker or {}).get("status_url"),
+                "status_path": item.get("status_path") or (worker or {}).get("status_path"),
+                "telemetry_missing": telemetry_missing,
+                "liveness_reliable": liveness_reliable,
+                "log_fallback": False,
+                "log_source": "dispatch",
                 "prompt": item.get("agent_prompt"),
                 "started_at": item.get("agent_started_at"),
                 "log_tail": None,
                 "linked_prs": [],
             }
-            # Check if process is alive
-            pid = item.get("agent_pid")
+
+            # Read log tail before any auto-complete decision so error checks
+            # have real content and fallback logs are clearly labelled.
+            log_content = None
+            if log_path:
+                expanded_log = Path(os.path.expanduser(str(log_path)))
+                if expanded_log.exists():
+                    try:
+                        tail_bytes = 15000
+                        with open(expanded_log, "rb") as f:
+                            f.seek(0, 2)
+                            size = f.tell()
+                            if size > tail_bytes:
+                                f.seek(size - tail_bytes)
+                                f.readline()
+                            else:
+                                f.seek(0)
+                            log_content = f.read().decode("utf-8", errors="replace")
+                    except Exception as e:
+                        log_content = f"Error reading log: {e}"
+
+            if not log_content or log_content.strip() == "":
+                agent_log = Path.home() / ".hermes" / "logs" / "agent.log"
+                if agent_log.exists():
+                    result["log_fallback"] = True
+                    result["log_source"] = "fallback"
+                    result["fallback_log_path"] = str(agent_log)
+                    try:
+                        r = subprocess.run(
+                            ["tail", "-200", str(agent_log)],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        if r.returncode == 0 and r.stdout.strip():
+                            lines = r.stdout.strip().split("\n")
+                            filtered = []
+                            for line in lines:
+                                if any(kw in line.lower() for kw in ["tool", "error", "warning", "subagent", "delegat"]):
+                                    parts = line.split(" INFO ", 1)
+                                    if len(parts) > 1:
+                                        filtered.append(parts[1])
+                                    elif len(parts) == 1:
+                                        for lvl in (" WARN ", " ERROR "):
+                                            p = line.split(lvl, 1)
+                                            if len(p) > 1:
+                                                filtered.append(p[1])
+                                                break
+                            if filtered:
+                                log_content = "[Fallback ~/.hermes/logs/agent.log - tool activity]\n" + "\n".join(filtered[-50:])
+                    except Exception:
+                        pass
+
+            result["log_tail"] = log_content
+
+            # Check if process is alive. Missing PID from gateway means
+            # liveness is explicitly unreliable, not that the agent exited.
             if pid:
                 try:
                     check = subprocess.run(["kill", "-0", str(pid)], capture_output=True, timeout=5)
                     result["status"] = "running" if check.returncode == 0 else "exited"
                 except Exception:
                     result["status"] = "unknown"
-            elif item.get("started_at"):
-                result["status"] = "exited"
+            elif result["session_id"] or result["dispatch_id"]:
+                result["status"] = "dispatched"
+            elif item.get("started_at") or item.get("agent_started_at"):
+                result["status"] = "unknown"
 
             # Auto-complete: if agent exited and item still in_progress, move to completed/failed
-            if result["status"] == "exited" and source_list_name == "in_progress":
+            if result["status"] == "exited" and source_list_name == "in_progress" and liveness_reliable:
                 from queue import load_queue as _lq, save_queue as _sq
                 q = _lq()
                 for i in q["in_progress"]:
@@ -670,57 +895,6 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                                       details={"auto": True, "source": "agent-status-check"})
                         _sq(q)
                         break
-            # Read log tail
-            log_file = item.get("agent_log")
-            log_content = None
-            if log_file and Path(log_file).exists():
-                try:
-                    tail_bytes = 15000
-                    with open(log_file, "rb") as f:
-                        f.seek(0, 2)
-                        size = f.tell()
-                        if size > tail_bytes:
-                            f.seek(size - tail_bytes)
-                            f.readline()
-                        else:
-                            f.seek(0)
-                        log_content = f.read().decode("utf-8", errors="replace")
-                except Exception as e:
-                    log_content = f"Error reading log: {e}"
-
-            # If log file is empty, try hermes agent.log for live activity
-            if not log_content or log_content.strip() == "":
-                agent_log = Path.home() / ".hermes" / "logs" / "agent.log"
-                if agent_log.exists():
-                    try:
-                        # Get last 200 lines from agent.log (live tool activity)
-                        r = subprocess.run(
-                            ["tail", "-200", str(agent_log)],
-                            capture_output=True, text=True, timeout=5
-                        )
-                        if r.returncode == 0 and r.stdout.strip():
-                            # Filter to recent activity (tool calls, errors)
-                            lines = r.stdout.strip().split("\n")
-                            filtered = []
-                            for line in lines:
-                                if any(kw in line.lower() for kw in ["tool", "error", "warning", "subagent", "delegat"]):
-                                    # Extract just the message part
-                                    parts = line.split(" INFO ", 1)
-                                    if len(parts) > 1:
-                                        filtered.append(parts[1])
-                                    elif len(parts) == 1:
-                                        # Try WARN/ERROR
-                                        for lvl in (" WARN ", " ERROR "):
-                                            p = line.split(lvl, 1)
-                                            if len(p) > 1:
-                                                filtered.append(p[1])
-                                                break
-                            if filtered:
-                                log_content = "[Live agent.log — tool activity]\n" + "\n".join(filtered[-50:])
-                    except Exception:
-                        pass
-
-            result["log_tail"] = log_content
             # Check for linked PRs on the GitHub issue
             repo = item.get("repo")
             issue_number = item.get("issue_number")
@@ -738,8 +912,11 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             results = sync_github_issues(repo_filter)
             self._json_response(results)
         elif path == "/api/health":
+            from queue import load_queue
+            from events import load_decompose_queue
+            q = load_queue()
             dq = load_decompose_queue()
-            q = load_queue_json()
+            stale = _pool_mgr.reap_stale()
             self._json_response({
                 "status": "ok",
                 "service": "cwc-mission-control",
@@ -749,23 +926,24 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     "completed": len(q["completed"]),
                     "failed": len(q["failed"]),
                 },
-                "decompose": {
-                    "pending": len(dq["pending"]),
-                    "completed": len(dq["completed"]),
-                    "failed": len(dq["failed"]),
-                },
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-        elif path == "/health":
-            dq = load_decompose_queue()
-            self._json_response({
-                "status": "ok",
-                "service": "cwc-issue-webhook",
                 "decompose_queue": {
                     "pending": len(dq["pending"]),
                     "completed": len(dq["completed"]),
                     "failed": len(dq["failed"]),
-                }
+                },
+                "worker_pools": _pool_mgr.health(),
+                "reaped_stale": [{"id": w.get("id"), "item_id": w.get("item_id")} for w in stale],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+        elif path == "/health":
+            self._json_response({
+                "status": "ok",
+                "service": "cwc-issue-webhook",
+                "decompose_queue": {
+                    "pending": 0,
+                    "completed": 0,
+                    "failed": 0,
+                },
             })
         elif path == "/decompose-status":
             self._json_response(load_decompose_queue())
@@ -785,6 +963,15 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps(data, indent=2, default=str).encode())
+
+    def _queue_with_eligibility(self):
+        queue = load_queue_json()
+        active_repo_locks = {w.get("repo") for w in _pool_mgr.active_workers() if w.get("repo")}
+        for status in ("pending", "in_progress", "completed", "failed"):
+            for item in queue.get(status, []):
+                item["queue_status"] = status
+                item["eligibility"] = evaluate_item(item, queue_status=status, active_repo_locks=active_repo_locks)
+        return queue
 
     def _enriched_queue(self):
         """Return queue with cycle times and event counts per item."""
@@ -970,27 +1157,16 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
 
         return actions
 
-    def _dispatch_agent(self, item_id, repo, issue_number, title, body, html_url, prompt_id):
-        """Spawn a pi agent to work on an issue. Returns agent info."""
-        from queue import load_queue, save_queue, next_pending
+    def _dispatch_agent(self, item_id, repo, issue_number, title, body, html_url, prompt_id, model_provider=None, model_name=None):
+        """Dispatch a coding agent via Hermes gateway webhook.
 
-        # Load prompt template
-        prompts = self._load_prompts()
-        prompt = next((p for p in prompts if p["id"] == prompt_id), None)
-        if not prompt:
-            return {"error": f"Prompt '{prompt_id}' not found"}, 400
-
-        local_path = REPO_MAP.get(repo, f"/home/deploy/apps/{repo.split('/')[-1]}")
-
-        # Render the prompt
-        rendered = self._render_prompt(prompt["body"], {
-            "title": title,
-            "repo": repo,
-            "local_path": local_path,
-            "html_url": html_url,
-            "body": body or "",
-            "issue_number": str(issue_number),
-        })
+        Instead of shelling out to `hermes chat -q`, we POST a synthetic
+        GitHub issue event to the cwc-issue-dispatch webhook subscription.
+        The Hermes gateway spawns the agent with proper toolset injection,
+        model config, yolo mode, and session management.
+        """
+        from queue import load_queue, save_queue
+        model_provider, model_name = normalize_dispatch_model(model_provider, model_name)
 
         # Claim the item (move to in_progress)
         queue = load_queue()
@@ -1016,8 +1192,14 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-        # Reset agent fields and move to in_progress
-        for k in ("started_at", "agent_pid", "agent_log", "agent_prompt", "agent_started_at", "completed_at", "error", "closed_via"):
+        # Reset agent fields, but keep any existing pid until gateway returns a
+        # new one so stale live-process checks still work during redispatch.
+        for k in (
+            "started_at", "agent_log", "agent_prompt", "agent_started_at",
+            "completed_at", "error", "closed_via", "dispatch_id", "session_id",
+            "log_path", "transcript_path", "status_url", "status_path",
+            "telemetry_missing", "liveness_reliable",
+        ):
             item[k] = None
         if source_list != "pending":
             queue[source_list].remove(item)
@@ -1031,64 +1213,188 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                   issue_number=issue_number, title=title,
                   details={"source": "manual_dispatch", "prompt": prompt_id})
 
-        # Write prompt to temp file so hermes can read it
-        import tempfile
-        safe_id = item_id.replace("/", "_").replace("#", "-")
-        prompt_file = Path(tempfile.mktemp(suffix=".md", prefix=f"dispatch-{safe_id}-"))
-        prompt_file.write_text(rendered)
+        # Build synthetic GitHub issue webhook payload
+        # The cwc-issue-dispatch subscription on the Hermes gateway
+        # receives this and spawns a coding agent
+        local_path = REPO_MAP.get(repo, f"/home/deploy/apps/{repo.split('/')[-1]}")
+        secret = load_gateway_secret() or load_secret() or ""
 
-        # Build the hermes command
-        # Use python -u (unbuffered) directly for live log output
-        hermes_python = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python"
-        hermes_main = Path.home() / ".hermes" / "hermes-agent" / "hermes_cli" / "main.py"
-        log_file = Path(tempfile.mktemp(suffix=".log", prefix=f"agent-{safe_id}-"))
+        payload = {
+            "action": "opened",
+            "issue": {
+                "number": issue_number,
+                "title": title,
+                "body": body or "",
+                "html_url": html_url,
+                "user": {"login": item.get("author", "unknown")},
+                "labels": [{"name": l} for l in item.get("labels", [])],
+                "state": "open",
+            },
+            "repository": {
+                "full_name": repo,
+                "name": repo.split("/")[-1],
+                "owner": {"login": repo.split("/")[0]},
+            },
+            "sender": {"login": item.get("author", "unknown")},
+            # Context fields at top-level so template can access {local_path} etc.
+            "local_path": local_path,
+            "prompt_id": prompt_id,
+            "item_id": item_id,
+            "model_provider": model_provider,
+            "model": model_name,
+            "chain_pr_guardian": True,
+        }
 
-        cmd = (
-            f"cd {local_path} && "
-            f"PYTHONUNBUFFERED=1 GITHUB_TOKEN={os.environ.get('GITHUB_TOKEN', '')} "
-            f"{hermes_python} -u {hermes_main} chat -q \"$(cat {prompt_file})\" -Q --yolo"
-            f" > {log_file} 2>&1 &"
-            f" echo $!"
-        )
+        payload_bytes = json.dumps(payload).encode()
+        signature = "sha256=" + hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest()
 
         try:
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
-            pid = result.stdout.strip()
-            if not pid:
-                # Failed to start, move back to pending
-                queue = load_queue()
-                for i in queue["in_progress"]:
-                    if i["id"] == item_id:
-                        i["started_at"] = None
-                        queue["in_progress"].remove(i)
-                        queue["pending"].insert(0, i)
-                        save_queue(queue)
-                        break
-                return {"error": "Failed to start agent", "stderr": result.stderr[:200]}, 500
+            req = Request(
+                f"{HERMES_GATEWAY}/webhooks/cwc-issue-dispatch",
+                data=payload_bytes,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Hub-Signature-256": signature,
+                    "X-GitHub-Event": "issues",
+                },
+                method="POST",
+            )
+            with urlopen(req, timeout=15) as resp:
+                response_body = resp.read().decode()
+                resp_code = resp.getcode()
 
-            # Track the agent
+            if resp_code != 202:
+                raise Exception(f"Gateway returned {resp_code}: {response_body}")
+
+            try:
+                gateway_response = json.loads(response_body) if response_body.strip() else {}
+            except Exception:
+                gateway_response = {"raw": response_body[:500]}
+            telemetry = normalize_dispatch_telemetry(gateway_response)
+            dispatch_id = telemetry.get("dispatch_id")
+            session_id = telemetry.get("session_id")
+            agent_pid = telemetry.get("pid")
+
+            # Track the dispatch. Gateway may not expose PID yet; diagnostics
+            # below make that explicit for worker pool and API consumers.
+            started_at = datetime.now(timezone.utc).isoformat()
             queue = load_queue()
+            current_item = None
             for i in queue["in_progress"]:
                 if i["id"] == item_id:
-                    i["agent_pid"] = pid
-                    i["agent_log"] = str(log_file)
+                    current_item = i
                     i["agent_prompt"] = prompt_id
-                    i["agent_started_at"] = datetime.now(timezone.utc).isoformat()
+                    i["agent_started_at"] = started_at
+                    i["model_provider"] = model_provider
+                    i["model"] = model_name
+                    i["dispatch_id"] = dispatch_id
+                    i["session_id"] = session_id
+                    if agent_pid:
+                        i["agent_pid"] = agent_pid
+                    i["log_path"] = telemetry.get("log_path")
+                    i["transcript_path"] = telemetry.get("transcript_path")
+                    i["status_url"] = telemetry.get("status_url")
+                    i["status_path"] = telemetry.get("status_path")
+                    i["session_path"] = telemetry.get("session_path")
+                    i["telemetry_missing"] = telemetry.get("telemetry_missing", [])
+                    i["liveness_reliable"] = telemetry.get("liveness_reliable", False)
+                    i["agent_log"] = telemetry.get("log_path")
                     save_queue(queue)
                     break
 
+            trace_paths = ensure_trace_bundle(item_id)
+            trace_paths["meta_json"].write_text(json.dumps({
+                "item_id": item_id,
+                "repo": repo,
+                "issue_number": issue_number,
+                "title": title,
+                "html_url": html_url,
+                "local_path": local_path,
+                "dispatch_id": dispatch_id,
+                "session_id": session_id,
+                "pid": agent_pid,
+                "model_provider": model_provider,
+                "model": model_name,
+                "prompt_id": prompt_id,
+                "gateway_response": gateway_response,
+                "telemetry": telemetry,
+                "started_at": started_at,
+            }, indent=2, default=str), encoding="utf-8")
+            trace_paths["prompt_md"].write_text(body or "", encoding="utf-8")
+            upsert_trace(
+                item_id=item_id,
+                repo=repo,
+                issue_number=issue_number,
+                session_id=session_id,
+                dispatch_id=dispatch_id,
+                pid=agent_pid,
+                status="dispatched",
+                started_at=started_at,
+                model_provider=model_provider,
+                model=model_name,
+                prompt_id=prompt_id,
+                log_path=telemetry.get("log_path"),
+                transcript_path=telemetry.get("transcript_path") or telemetry.get("session_path"),
+                trace_dir=str(trace_paths["trace_dir"]),
+            )
+
+            worker = _pool_mgr.register_worker(
+                item_id, repo, started_at=started_at, pid=agent_pid,
+                session_id=session_id, dispatch_id=dispatch_id,
+                telemetry=telemetry, log_path=telemetry.get("log_path"),
+                transcript_path=telemetry.get("transcript_path"),
+                status_url=telemetry.get("status_url"),
+                status_path=telemetry.get("status_path"),
+                telemetry_missing=telemetry.get("telemetry_missing", []),
+                liveness_reliable=telemetry.get("liveness_reliable", False),
+            )
+            if worker:
+                _pool_mgr.refresh_worker(
+                    worker.get("id"), pid=agent_pid, session_id=session_id,
+                    dispatch_id=dispatch_id, last_status="dispatched",
+                    telemetry=telemetry, log_path=telemetry.get("log_path"),
+                    transcript_path=telemetry.get("transcript_path"),
+                    status_url=telemetry.get("status_url"),
+                    status_path=telemetry.get("status_path"),
+                    telemetry_missing=telemetry.get("telemetry_missing", []),
+                    liveness_reliable=telemetry.get("liveness_reliable", False),
+                )
+            if issue_queue_db and current_item:
+                issue_queue_db.record_dispatch(current_item, prompt_id, model_provider, model_name, gateway_response, status="accepted")
             log_event("issue.dispatched", item_id=item_id, repo=repo,
                       issue_number=issue_number, title=title,
-                      details={"pid": pid, "prompt": prompt_id, "log": str(log_file)})
+                      details={"method": "gateway_webhook", "prompt": prompt_id,
+                               "route": "cwc-issue-dispatch", "model_provider": model_provider,
+                               "model": model_name, "session_id": session_id,
+                               "dispatch_id": dispatch_id,
+                               "pid": agent_pid,
+                               "log_path": telemetry.get("log_path"),
+                               "transcript_path": telemetry.get("transcript_path"),
+                               "status_url": telemetry.get("status_url"),
+                               "status_path": telemetry.get("status_path"),
+                               "telemetry_missing": telemetry.get("telemetry_missing", []),
+                               "liveness_reliable": telemetry.get("liveness_reliable", False)})
 
             return {
                 "ok": True,
                 "item_id": item_id,
-                "pid": pid,
-                "log_file": str(log_file),
+                "method": "gateway_webhook",
                 "prompt": prompt_id,
                 "local_path": local_path,
-            }, 200
+                "model_provider": model_provider,
+                "model": model_name,
+                "session_id": session_id,
+                "dispatch_id": dispatch_id,
+                "pid": agent_pid,
+                "agent_pid": agent_pid,
+                "log_path": telemetry.get("log_path"),
+                "transcript_path": telemetry.get("transcript_path"),
+                "status_url": telemetry.get("status_url"),
+                "status_path": telemetry.get("status_path"),
+                "session_path": telemetry.get("session_path"),
+                "telemetry_missing": telemetry.get("telemetry_missing", []),
+                "liveness_reliable": telemetry.get("liveness_reliable", False),
+            }, 202
 
         except Exception as e:
             # Move back to pending on error
@@ -1100,7 +1406,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     queue["pending"].insert(0, i)
                     save_queue(queue)
                     break
-            return {"error": str(e)[:200]}, 500
+            return {"error": str(e)[:500]}, 500
 
     def do_PATCH(self):
         """Handle prioritization: PATCH /api/queue/prioritize/<id> or PATCH /api/queue/move-down/<id>"""

@@ -1,10 +1,23 @@
 # Secrets
 webhook-secret
+gateway-secret
+webhooks/secrets.json
 
 # Runtime data (large JSON queues, SQLite events)
 queue.json
+queue.json.bak-*
 decompose-queue.json
 events.db
+queue-state.db*
+worker_pools.json
+sync-state.json
+traces/
+backups/
+salvage/
+*.out
+observability-*.md
+*.patch
+*.diff
 
 # Python cache
 __pycache__/

@@ -917,6 +917,185 @@
   .log-line { white-space: pre-wrap; word-break: break-all; min-height: 1em; }
   .log-dim { color: #666; font-style: italic; }
 
+  .trace-panel {
+    border-top: 1px solid var(--border);
+    padding: 1rem 1.25rem;
+  }
+  .trace-panel h3 { font-size: 0.85rem; margin: 0 0 0.75rem 0; }
+  .trace-empty {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+  .trace-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .trace-kv {
+    background: var(--card-bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.45rem 0.55rem;
+    min-width: 0;
+  }
+  .trace-kv-label {
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0;
+    margin-bottom: 0.15rem;
+  }
+  .trace-kv-value {
+    color: var(--text);
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
+  }
+  .trace-files {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+  }
+  .trace-file {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.35rem 0.5rem;
+  }
+  .trace-file.exists { color: var(--text); border-color: rgba(16,185,129,0.25); }
+  .trace-file-size { color: var(--text-dim); white-space: nowrap; }
+
+  /* Live Agents */
+  .agents-view { display: flex; flex-direction: column; gap: 1rem; }
+  .agents-hero {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+  .agents-title { font-size: 1rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.2rem; }
+  .agents-subtitle { font-size: 0.78rem; color: var(--text-muted); }
+  .agents-summary { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
+  .agent-pill, .telemetry-badge {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.18rem 0.5rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: var(--bg);
+    white-space: nowrap;
+  }
+  .agent-pill.green, .telemetry-badge.green { color: var(--color-done); border-color: rgba(22,163,74,0.3); background: rgba(22,163,74,0.08); }
+  .agent-pill.amber, .telemetry-badge.amber { color: var(--color-progress); border-color: rgba(202,138,4,0.3); background: rgba(202,138,4,0.08); }
+  .agent-pill.red, .telemetry-badge.red { color: var(--color-fail); border-color: rgba(220,38,38,0.3); background: rgba(220,38,38,0.08); }
+  .agent-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--text-faint);
+    border-radius: 12px;
+    padding: 1rem;
+  }
+  .agent-card.green { border-left-color: var(--color-done); }
+  .agent-card.amber { border-left-color: var(--color-progress); }
+  .agent-card.red { border-left-color: var(--color-fail); }
+  .agent-card-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+  }
+  .agent-card-title { font-size: 0.92rem; font-weight: 700; overflow-wrap: anywhere; }
+  .agent-card-meta { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.12rem; }
+  .agent-inspect-btn {
+    border: 1px solid var(--border-accent);
+    background: var(--card-bg-accent);
+    color: var(--accent);
+    border-radius: 7px;
+    padding: 0.35rem 0.6rem;
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .agent-inspect-btn:hover { background: var(--card-bg-accent-hover); border-color: var(--border-accent-strong); }
+  .agent-kv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    gap: 0.45rem;
+    margin-bottom: 0.75rem;
+  }
+  .agent-kv {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 0.45rem 0.55rem;
+    min-width: 0;
+  }
+  .agent-kv-label {
+    color: var(--text-muted);
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.12rem;
+  }
+  .agent-kv-value { font-size: 0.76rem; color: var(--text); overflow-wrap: anywhere; }
+  .agent-section-title {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 700;
+    margin: 0.75rem 0 0.4rem;
+  }
+  .agent-log-source {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    margin-bottom: 0.35rem;
+  }
+  .dispatch-list {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .dispatch-list h3 {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .dispatch-event {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 0.78rem;
+  }
+  .dispatch-event:last-child { border-bottom: none; }
+  .dispatch-event-title { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+  .dispatch-event-meta { color: var(--text-muted); font-size: 0.7rem; margin-top: 0.15rem; overflow-wrap: anywhere; }
+  .dispatch-event-time { color: var(--text-dim); font-size: 0.7rem; white-space: nowrap; }
+
   /* Repo Filter */
   .filter-bar {
     display: flex;
@@ -1035,11 +1214,15 @@ import htm from 'https://esm.sh/htm@3.1.1';
 
 const html = htm.bind(h);
 
-const API = '';
+// Use an explicit credential-free origin. Relative fetches fail in Chromium when
+// the dashboard was opened as https://user:pass@host because Request() refuses
+// to inherit credential-bearing URLs.
+const API = window.location.origin;
 const POLL_MS = 5000;
 
 const TABS = [
   { id: 'kanban', label: 'Kanban', icon: '\u25A3' },
+  { id: 'agents', label: 'Live Agents', icon: '\u25B6' },
   { id: 'activity', label: 'Activity', icon: '\u26A1' },
   { id: 'metrics', label: 'Metrics', icon: '\u2587' },
   { id: 'guards', label: 'Guards', icon: '\u25C8' },
@@ -1093,6 +1276,76 @@ function githubIssueUrl(item) {
   if (item.html_url) return item.html_url;
   if (item.repo && item.issue_number) return `https://github.com/${item.repo}/issues/${item.issue_number}`;
   return '#';
+}
+
+function compactPath(path) {
+  if (!path) return '';
+  const parts = String(path).split('/');
+  return parts.length > 4 ? '.../' + parts.slice(-4).join('/') : path;
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+async function apiJson(path) {
+  const r = await fetch(API + path);
+  let data = null;
+  try { data = await r.json(); } catch {}
+  if (!r.ok) {
+    const msg = data?.error || data?.message || r.status;
+    throw new Error(String(msg));
+  }
+  return data;
+}
+
+function parseDetails(details) {
+  if (!details) return {};
+  if (typeof details === 'object') return details;
+  try { return JSON.parse(details); } catch { return { raw: String(details) }; }
+}
+
+function displayTime(ts) {
+  if (!ts) return '-';
+  const ago = timeAgo(ts);
+  return ago ? `${ago} · ${String(ts).replace('T', ' ').replace(/\.\d+/, '')}` : String(ts);
+}
+
+function missingTelemetryFor(worker, status, trace) {
+  const missing = new Set([...(worker?.telemetry_missing || []), ...(status?.telemetry_missing || [])]);
+  if (!(worker?.pid || worker?.item_pid || status?.pid || trace?.pid)) missing.add('pid');
+  if (!(worker?.session_id || status?.session_id || trace?.session_id)) missing.add('session_id');
+  if (!(worker?.dispatch_id || status?.dispatch_id || trace?.dispatch_id)) missing.add('dispatch_id');
+  return Array.from(missing).filter(Boolean);
+}
+
+function traceReliability(worker, statusData, traceData, errors = []) {
+  if (errors.length) return { level: 'red', label: 'Error', reason: errors.join(', ') };
+  const trace = traceData?.trace;
+  const missing = missingTelemetryFor(worker, statusData, trace);
+  if (statusData?.status === 'exited' && statusData?.liveness_reliable === false) {
+    return { level: 'amber', label: 'Unverified', reason: 'PID/liveness telemetry is unreliable' };
+  }
+  if (missing.length || !traceData?.has_trace || !traceData?.has_bundle || statusData?.log_fallback) {
+    const bits = [];
+    if (missing.length) bits.push(`missing ${missing.join(', ')}`);
+    if (!traceData?.has_trace) bits.push('no trace row');
+    if (!traceData?.has_bundle) bits.push('no bundle');
+    if (statusData?.log_fallback) bits.push('fallback log');
+    return { level: 'amber', label: 'Partial', reason: bits.join(' · ') };
+  }
+  return { level: 'green', label: 'Reliable', reason: 'Trace row, bundle, and dispatch telemetry are present' };
+}
+
+function queueIndex(queue) {
+  const map = {};
+  ['pending', 'in_progress', 'completed', 'failed'].forEach(k => {
+    (queue?.[k] || []).forEach(item => { map[item.id] = { ...item, queue_status: k }; });
+  });
+  return map;
 }
 
 // ─── Theme Toggle ───
@@ -1181,6 +1434,30 @@ function TabBar({ active, onSwitch, counts }) {
   `;
 }
 
+function RepoEligibilityAlerts({ diagnostics, repoFilter }) {
+  const alerts = (diagnostics?.alerts || []).filter(a => repoFilter === 'all' || a.repo === repoFilter);
+  const summaries = (diagnostics?.repos || []).filter(r => repoFilter === 'all' || r.repo === repoFilter);
+  const notable = summaries.filter(r => r.visible > 0 && (r.eligible === 0 || r.blocked > 0)).slice(0, 4);
+  if (!alerts.length && !notable.length) return null;
+  return html`
+    <div style="margin-bottom:1rem;display:flex;flex-direction:column;gap:0.5rem">
+      ${alerts.map(a => html`
+        <div style=${`border:1px solid ${a.severity === 'red' ? 'rgba(220,38,38,0.35)' : 'rgba(202,138,4,0.35)'};background:${a.severity === 'red' ? 'rgba(220,38,38,0.06)' : 'rgba(202,138,4,0.06)'};border-radius:12px;padding:0.75rem 1rem;font-size:0.8rem;color:var(--text)`}>
+          <strong>${shortRepo(a.repo)}</strong>: ${a.message}
+          <span style="color:var(--text-muted);margin-left:0.5rem">${Object.entries(a.block_reasons || {}).map(([k,v]) => `${k}:${v}`).join(' · ')}</span>
+        </div>
+      `)}
+      ${notable.map(r => html`
+        <div style="border:1px solid var(--border);background:var(--card-bg);border-radius:12px;padding:0.65rem 1rem;font-size:0.78rem;color:var(--text-muted)">
+          <strong style="color:var(--text)">${shortRepo(r.repo)}</strong>
+          · visible ${r.visible} · eligible ${r.eligible} · blocked ${r.blocked}
+          ${r.repo_lock && html` · locked by ${r.repo_lock.item_id}`}
+        </div>
+      `)}
+    </div>
+  `;
+}
+
 function StatsBar({ queue, stats }) {
   const q = queue || {};
   return html`
@@ -1242,6 +1519,17 @@ function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, o
         </div>
       `}
 
+      ${item.eligibility && html`
+        <div class="card-labels">
+          <span class="label-tag" style=${`border-color:${item.eligibility.eligible ? 'rgba(22,163,74,0.35)' : 'rgba(202,138,4,0.35)'};color:${item.eligibility.eligible ? 'var(--color-done)' : 'var(--color-progress)'}`}>
+            ${item.eligibility.eligible ? 'Eligible' : (item.eligibility.visible ? 'Blocked' : 'Hidden')}
+          </span>
+          ${!item.eligibility.eligible && (item.eligibility.blocked_reasons || []).slice(0, 2).map(r => html`
+            <span class="label-tag" title=${r.message}>${r.code}</span>
+          `)}
+        </div>
+      `}
+
       <div class="card-footer">
         <div class="card-author">
           <span class="card-author-avatar">${authorInitial(item.author)}</span>
@@ -1254,6 +1542,9 @@ function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, o
 
         ${sectionKey === 'in_progress' && item.agent_pid && html`
           <span class="card-agent-badge">\u{1F916} Agent running (PID ${item.agent_pid})</span>
+        `}
+        ${sectionKey === 'in_progress' && !item.agent_pid && html`
+          <span class="card-agent-badge">Trace telemetry pending</span>
         `}
 
         ${sectionKey === 'failed' && item.error && html`
@@ -1269,6 +1560,9 @@ function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, o
           ${showRetry && html`
             <button class="card-action-btn btn-top" onClick=${() => onRetry(item.id)} title="Retry">\u21BB Retry</button>
             <button class="card-action-btn btn-danger" onClick=${() => onRemove(item.id)} title="Remove">\u2717</button>
+          `}
+          ${sectionKey === 'in_progress' && html`
+            <button class="card-action-btn btn-top" onClick=${() => onClick(item)} title="Inspect agent trace">Trace</button>
           `}
         </div>
       </div>
@@ -1387,7 +1681,7 @@ function ActivityView({ events }) {
       ${events.map(e => {
         const icon = EVENT_ICONS[e.event_type] || '\u25CF';
         const color = EVENT_COLORS[e.event_type] || '';
-        const details = typeof e.details === 'string' ? JSON.parse(e.details || '{}') : (e.details || {});
+        const details = parseDetails(e.details);
         return html`
           <div class="tl-item">
             <div class="tl-icon ${color}">${icon}</div>
@@ -1598,6 +1892,393 @@ function AgentLogViewer({ item }) {
   `;
 }
 
+function ItemEventLog({ item }) {
+  const [events, setEvents] = useState(null);
+  const [error, setError] = useState(null);
+
+  const fetchEvents = useCallback(async () => {
+    try {
+      const r = await fetch(API + '/api/events?limit=30&item_id=' + encodeURIComponent(item.id));
+      if (!r.ok) throw new Error(r.status);
+      setEvents(await r.json());
+      setError(null);
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+  }, [item.id]);
+
+  useEffect(() => {
+    fetchEvents();
+    const interval = setInterval(fetchEvents, POLL_MS);
+    return () => clearInterval(interval);
+  }, [fetchEvents]);
+
+  return html`
+    <div class="trace-panel">
+      <h3>Issue Event Log</h3>
+      ${error && html`<div class="trace-empty">Event API unavailable: ${error}</div>`}
+      ${!error && !events && html`<div class="trace-empty">Loading issue events...</div>`}
+      ${!error && events && events.length === 0 && html`<div class="trace-empty">No events recorded for this item yet.</div>`}
+      ${events && events.length > 0 && html`
+        <div class="timeline" style="max-width:none">
+          ${events.map(e => {
+            const icon = EVENT_ICONS[e.event_type] || '●';
+            const color = EVENT_COLORS[e.event_type] || '';
+            const details = parseDetails(e.details);
+            const summary = details.pr_number ? `PR #${details.pr_number}`
+              : details.error ? details.error
+              : details.error_summary ? details.error_summary
+              : details.status ? details.status
+              : details.dispatch_id ? details.dispatch_id
+              : details.reason ? details.reason
+              : '';
+            return html`
+              <div class="tl-item compact">
+                <div class="tl-icon ${color}">${icon}</div>
+                <div class="tl-content">
+                  <div class="tl-title"><strong>${e.event_type}</strong></div>
+                  <div class="tl-detail">
+                    ${summary ? String(summary).slice(0, 180) : (e.title || '').slice(0, 120)}
+                  </div>
+                </div>
+                <div class="tl-time">${timeAgo(e.timestamp)}</div>
+              </div>
+            `;
+          })}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function AgentTracePanel({ item }) {
+  const [traceData, setTraceData] = useState(null);
+  const [error, setError] = useState(null);
+
+  const fetchTrace = useCallback(async () => {
+    try {
+      const r = await fetch(API + '/api/agent-trace?item_id=' + encodeURIComponent(item.id));
+      if (!r.ok) throw new Error(r.status);
+      setTraceData(await r.json());
+      setError(null);
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+  }, [item.id]);
+
+  useEffect(() => {
+    fetchTrace();
+    const interval = setInterval(fetchTrace, POLL_MS);
+    return () => clearInterval(interval);
+  }, [fetchTrace]);
+
+  const trace = traceData?.trace;
+  const bundle = traceData?.bundle;
+  const files = bundle?.files || {};
+  const stdoutTail = files['stdout.log']?.tail;
+  const finalTail = files['final.txt']?.tail;
+  const transcriptTail = files['transcript.jsonl']?.tail;
+  const diagnosticTail = stdoutTail || finalTail || transcriptTail;
+
+  return html`
+    <div class="trace-panel">
+      <h3>Agent Trace</h3>
+      ${error && html`<div class="trace-empty">Trace API unavailable: ${error}</div>`}
+      ${!error && !traceData && html`<div class="trace-empty">Loading trace metadata...</div>`}
+      ${!error && traceData && !trace && html`
+        <div class="trace-empty">
+          No durable trace row recorded yet.
+          ${bundle?.trace_dir && html` Bundle convention: ${compactPath(bundle.trace_dir)}`}
+        </div>
+      `}
+      ${trace && html`
+        <div class="trace-grid">
+          <div class="trace-kv">
+            <div class="trace-kv-label">Status</div>
+            <div class="trace-kv-value">${trace.status || 'unknown'}</div>
+          </div>
+          <div class="trace-kv">
+            <div class="trace-kv-label">Session</div>
+            <div class="trace-kv-value">${trace.session_id || '-'}</div>
+          </div>
+          <div class="trace-kv">
+            <div class="trace-kv-label">Dispatch</div>
+            <div class="trace-kv-value">${trace.dispatch_id || '-'}</div>
+          </div>
+          <div class="trace-kv">
+            <div class="trace-kv-label">PID</div>
+            <div class="trace-kv-value">${trace.pid || '-'}</div>
+          </div>
+          <div class="trace-kv">
+            <div class="trace-kv-label">Model</div>
+            <div class="trace-kv-value">${[trace.model_provider, trace.model].filter(Boolean).join(' / ') || '-'}</div>
+          </div>
+          <div class="trace-kv">
+            <div class="trace-kv-label">Prompt</div>
+            <div class="trace-kv-value">${trace.prompt_id || '-'}</div>
+          </div>
+          <div class="trace-kv">
+            <div class="trace-kv-label">PR</div>
+            <div class="trace-kv-value">${trace.pr_number ? '#' + trace.pr_number : '-'}</div>
+          </div>
+          <div class="trace-kv">
+            <div class="trace-kv-label">Updated</div>
+            <div class="trace-kv-value">${trace.updated_at ? timeAgo(trace.updated_at) : '-'}</div>
+          </div>
+        </div>
+
+        ${trace.error_summary && html`
+          <div class="trace-empty" style="margin-bottom:0.75rem;color:var(--color-fail)">
+            ${trace.error_summary}
+          </div>
+        `}
+      `}
+
+      ${bundle && html`
+        <div class="trace-files">
+          ${Object.entries(files).map(([name, info]) => html`
+            <div class="trace-file ${info.exists ? 'exists' : ''}" title=${info.path}>
+              <span>${name}</span>
+              <span class="trace-file-size">${info.exists ? formatBytes(info.bytes) : 'missing'}</span>
+            </div>
+          `)}
+        </div>
+      `}
+
+      ${diagnosticTail && html`
+        <div class="agent-log" style="max-height:220px">
+          ${diagnosticTail.split('\n').map((line, i) => html`<div key=${i} class="log-line">${line}</div>`)}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function BundleFiles({ bundle }) {
+  const files = bundle?.files || {};
+  const names = ['meta.json', 'prompt.md', 'transcript.jsonl', 'tool_calls.jsonl', 'stdout.log', 'final.txt'];
+  return html`
+    <div class="trace-files">
+      ${names.map(name => {
+        const info = files[name] || { exists: false, bytes: 0 };
+        return html`
+          <div class="trace-file ${info.exists ? 'exists' : ''}" title=${info.path || name}>
+            <span>${name}</span>
+            <span class="trace-file-size">${info.exists ? formatBytes(info.bytes) : 'missing'}</span>
+          </div>
+        `;
+      })}
+    </div>
+  `;
+}
+
+function LogTailPanel({ statusData, traceData }) {
+  const files = traceData?.bundle?.files || {};
+  const candidates = [
+    { label: 'trace bundle stdout.log', tail: files['stdout.log']?.tail },
+    { label: 'trace bundle final.txt', tail: files['final.txt']?.tail },
+    { label: 'trace bundle transcript.jsonl', tail: files['transcript.jsonl']?.tail },
+    {
+      label: statusData?.log_fallback ? 'fallback global ~/.hermes/logs/agent.log' : 'dispatch log tail',
+      tail: statusData?.log_tail,
+      path: statusData?.log_fallback ? statusData?.fallback_log_path : statusData?.log_path,
+    },
+  ];
+  const selected = candidates.find(c => c.tail && String(c.tail).trim());
+  return html`
+    <div class="agent-section-title">Log Tail</div>
+    ${selected ? html`
+      <div class="agent-log-source">
+        <span>${selected.label}</span>
+        <span>${compactPath(selected.path || '')}</span>
+      </div>
+      <div class="agent-log" style="max-height:220px">
+        ${String(selected.tail).split('\n').slice(-160).map((line, i) => html`<div key=${i} class="log-line">${line}</div>`)}
+      </div>
+    ` : html`
+      <div class="trace-empty">No per-agent log, trace transcript, or fallback log tail is available yet.</div>
+    `}
+  `;
+}
+
+function WorkerTraceCard({ worker, item, enriched, onInspect }) {
+  const statusData = enriched?.statusData || null;
+  const traceData = enriched?.traceData || null;
+  const trace = traceData?.trace || {};
+  const errors = enriched?.errors || [];
+  const reliability = traceReliability(worker, statusData, traceData, errors);
+  const missing = missingTelemetryFor(worker, statusData, trace);
+  const telemetry = worker?.telemetry || {};
+  const issueNumber = item?.issue_number || worker?.issue_number || trace?.issue_number;
+  const repo = item?.repo || worker?.repo || trace?.repo || 'unknown repo';
+  const status = statusData?.status || worker?.last_status || worker?.state || trace?.status || 'unknown';
+  const pid = worker?.pid || worker?.item_pid || statusData?.pid || trace?.pid;
+  const sessionId = worker?.session_id || statusData?.session_id || trace?.session_id;
+  const dispatchId = worker?.dispatch_id || statusData?.dispatch_id || trace?.dispatch_id;
+  const model = [trace?.model_provider || telemetry?.model_provider || telemetry?.provider, trace?.model || telemetry?.model].filter(Boolean).join(' / ') || '-';
+  const prompt = trace?.prompt_id || statusData?.prompt || telemetry?.prompt_id || item?.agent_prompt || '-';
+
+  return html`
+    <div class="agent-card ${reliability.level}">
+      <div class="agent-card-header">
+        <div>
+          <div class="agent-card-title">${worker?.item_id || item?.id || 'Unknown worker'}</div>
+          <div class="agent-card-meta">
+            ${repo}${issueNumber ? '#' + issueNumber : ''} · ${status}
+          </div>
+        </div>
+        <div class="agents-summary">
+          <span class="telemetry-badge ${reliability.level}" title=${reliability.reason}>${reliability.label}</span>
+          <button class="agent-inspect-btn" onClick=${() => item && onInspect(item)}>Inspect issue</button>
+        </div>
+      </div>
+
+      <div class="agent-kv-grid">
+        <div class="agent-kv"><div class="agent-kv-label">State</div><div class="agent-kv-value">${worker?.state || '-'}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">Status</div><div class="agent-kv-value">${status}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">Started</div><div class="agent-kv-value">${displayTime(worker?.started_at || statusData?.started_at || trace?.started_at)}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">Claimed</div><div class="agent-kv-value">${displayTime(worker?.claimed_at)}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">Heartbeat</div><div class="agent-kv-value">${displayTime(worker?.last_heartbeat_at)}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">Lease</div><div class="agent-kv-value">${displayTime(worker?.lease_expires_at)}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">PID</div><div class="agent-kv-value">${pid || html`<span class="telemetry-badge amber">missing</span>`}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">Session</div><div class="agent-kv-value">${sessionId || html`<span class="telemetry-badge amber">missing</span>`}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">Dispatch</div><div class="agent-kv-value">${dispatchId || html`<span class="telemetry-badge amber">missing</span>`}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">Model</div><div class="agent-kv-value">${model}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">Prompt</div><div class="agent-kv-value">${prompt}</div></div>
+        <div class="agent-kv"><div class="agent-kv-label">Liveness</div><div class="agent-kv-value">${statusData?.liveness_reliable || worker?.liveness_reliable ? 'reliable' : 'unreliable'}</div></div>
+      </div>
+
+      ${missing.length > 0 && html`
+        <div class="agents-summary" style="justify-content:flex-start;margin-bottom:0.75rem">
+          ${missing.map(m => html`<span class="telemetry-badge amber">missing ${m}</span>`)}
+        </div>
+      `}
+      ${errors.length > 0 && html`
+        <div class="trace-empty" style="color:var(--color-fail);margin-bottom:0.75rem">${errors.join(' · ')}</div>
+      `}
+
+      <div class="agent-section-title">Trace Bundle</div>
+      <${BundleFiles} bundle=${traceData?.bundle} />
+      ${traceData && !traceData.has_trace && html`<div class="trace-empty">No trace row exists for this worker yet. This is expected for older or telemetry-poor dispatches.</div>`}
+      ${traceData && !traceData.has_bundle && html`<div class="trace-empty">No trace bundle directory exists at ${compactPath(traceData.bundle?.trace_dir)}.</div>`}
+      <${LogTailPanel} statusData=${statusData} traceData=${traceData} />
+    </div>
+  `;
+}
+
+function RecentDispatchEvents({ events }) {
+  const rows = events || [];
+  return html`
+    <div class="dispatch-list">
+      <h3>Recent Dispatch Events</h3>
+      ${rows.length === 0 ? html`<div class="empty-section">No recent dispatch events</div>` : rows.map(e => {
+        const details = parseDetails(e.details);
+        const missing = ['dispatch_id', 'session_id', 'pid'].filter(k => !details[k]);
+        return html`
+          <div class="dispatch-event">
+            <div>
+              <div class="dispatch-event-title">${e.item_id || details.item_id || 'unknown item'}</div>
+              <div class="dispatch-event-meta">
+                ${(e.repo || details.repo || 'unknown repo')}${(e.issue_number || details.issue_number) ? '#' + (e.issue_number || details.issue_number) : ''}
+                · prompt ${details.prompt || details.prompt_id || '-'}
+                · ${[details.model_provider, details.model].filter(Boolean).join(' / ') || 'model unknown'}
+              </div>
+              <div class="agents-summary" style="justify-content:flex-start;margin-top:0.35rem">
+                ${missing.length ? missing.map(k => html`<span class="telemetry-badge amber">missing ${k}</span>`) : html`<span class="telemetry-badge green">telemetry present</span>`}
+              </div>
+            </div>
+            <div class="dispatch-event-time">${timeAgo(e.timestamp || e.created_at)}</div>
+          </div>
+        `;
+      })}
+    </div>
+  `;
+}
+
+function LiveAgentsView({ health, queue, dispatchEvents, onInspect }) {
+  const [enriched, setEnriched] = useState({});
+  const [loading, setLoading] = useState(false);
+  const workers = (health?.worker_pools?.workers || []).filter(w => (w.state || 'active') === 'active');
+  const byItem = queueIndex(queue);
+
+  const loadWorkerDetails = useCallback(async () => {
+    if (workers.length === 0) {
+      setEnriched({});
+      return;
+    }
+    setLoading(true);
+    const pairs = await Promise.allSettled(workers.map(async worker => {
+      const itemId = worker.item_id;
+      if (!itemId) return [worker.id || Math.random(), { statusData: null, traceData: null, errors: ['worker has no item_id'] }];
+      const [statusResult, traceResult] = await Promise.allSettled([
+        apiJson('/api/agent-status?item_id=' + encodeURIComponent(itemId)),
+        apiJson('/api/agent-trace?item_id=' + encodeURIComponent(itemId)),
+      ]);
+      const errors = [];
+      if (statusResult.status === 'rejected') errors.push('status: ' + statusResult.reason.message);
+      if (traceResult.status === 'rejected') errors.push('trace: ' + traceResult.reason.message);
+      return [itemId, {
+        statusData: statusResult.status === 'fulfilled' ? statusResult.value : null,
+        traceData: traceResult.status === 'fulfilled' ? traceResult.value : null,
+        errors,
+      }];
+    }));
+    const next = {};
+    pairs.forEach(result => {
+      if (result.status === 'fulfilled') next[result.value[0]] = result.value[1];
+    });
+    setEnriched(next);
+    setLoading(false);
+  }, [JSON.stringify(workers.map(w => [w.id, w.item_id, w.pid, w.session_id, w.dispatch_id, w.last_heartbeat_at]))]);
+
+  useEffect(() => {
+    loadWorkerDetails();
+    const i = setInterval(loadWorkerDetails, POLL_MS);
+    return () => clearInterval(i);
+  }, [loadWorkerDetails]);
+
+  const reliabilityCounts = workers.reduce((acc, worker) => {
+    const detail = enriched[worker.item_id] || {};
+    const r = traceReliability(worker, detail.statusData, detail.traceData, detail.errors || []);
+    acc[r.level] = (acc[r.level] || 0) + 1;
+    return acc;
+  }, {});
+
+  return html`
+    <div class="agents-view">
+      <div class="agents-hero">
+        <div>
+          <div class="agents-title">Agent Traces / Live Agents</div>
+          <div class="agents-subtitle">
+            Polling active worker pools, agent status, trace bundles, and dispatch events every ${Math.round(POLL_MS / 1000)} seconds.
+          </div>
+        </div>
+        <div class="agents-summary">
+          <span class="agent-pill">${workers.length} active</span>
+          <span class="agent-pill green">${reliabilityCounts.green || 0} reliable</span>
+          <span class="agent-pill amber">${reliabilityCounts.amber || 0} partial</span>
+          <span class="agent-pill red">${reliabilityCounts.red || 0} errors</span>
+          ${loading && html`<span class="agent-pill">refreshing</span>`}
+        </div>
+      </div>
+
+      ${workers.length === 0 ? html`
+        <div class="empty-section">No active workers are registered in worker_pools.</div>
+      ` : workers.map(worker => html`
+        <${WorkerTraceCard}
+          key=${worker.item_id || worker.id}
+          worker=${worker}
+          item=${byItem[worker.item_id]}
+          enriched=${enriched[worker.item_id]}
+          onInspect=${onInspect}
+        />
+      `)}
+
+      <${RecentDispatchEvents} events=${dispatchEvents} />
+    </div>
+  `;
+}
+
 function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, onFinish, dispatching }) {
   if (!item) return null;
   const [selectedPrompt, setSelectedPrompt] = useState('default');
@@ -1645,6 +2326,12 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, onFinish,
         </div>
 
         <div class="modal-body">
+          ${item.eligibility && html`
+            <div class="trace-empty" style=${`margin-bottom:0.75rem;color:${item.eligibility.eligible ? 'var(--color-done)' : 'var(--color-progress)'}`}>
+              Eligibility: <strong>${item.eligibility.eligible ? 'dispatchable' : 'blocked'}</strong>
+              ${!item.eligibility.eligible && html` · ${(item.eligibility.blocked_reasons || []).map(r => `${r.code}: ${r.message}`).join(' · ')}`}
+            </div>
+          `}
           ${body ? html`<div class="modal-issue-body">${body}</div>` : html`<div class="modal-empty">No description provided.</div>`}
           ${comments.length > 0 && html`
             <div class="modal-comments">
@@ -1661,6 +2348,9 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, onFinish,
             </div>
           `}
         </div>
+
+        <${AgentTracePanel} item=${item} />
+        <${ItemEventLog} item=${item} />
 
         ${!item.agent_pid && html`
           <div class="modal-dispatch">
@@ -1749,10 +2439,13 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHash);
   }, [queue.data]);
   const events = useFetch('/api/events?limit=50');
+  const dispatchEvents = useFetch('/api/events?type=issue.dispatched&limit=10');
+  const health = useFetch('/api/health');
   const stats = useFetch('/api/stats');
   const tree = useFetch('/api/decompose-tree');
   const repos = useFetch('/api/repos');
   const prompts = useFetch('/api/prompts');
+  const diagnostics = useFetch('/api/eligibility');
 
   const filteredQueue = (() => {
     if (!queue.data) return null;
@@ -1782,6 +2475,7 @@ function App() {
 
   const counts = {
     kanban: (filteredQueue?.pending?.length || 0) + (filteredQueue?.in_progress?.length || 0) + (filteredQueue?.failed?.length || 0),
+    agents: health.data?.worker_pools?.active_workers || 0,
     activity: events.data?.length || 0,
     guards: stats.data?.guard_triggers?.length || 0,
     tree: tree.data?.length || 0,
@@ -1807,6 +2501,7 @@ function App() {
         ? `${summary} (${errors.length} error${errors.length > 1 ? 's' : ''})`
         : summary, errors.length > 0 ? 'warning' : 'success');
       queue.refresh();
+      diagnostics.refresh();
     } catch (e) {
       showToast('Sync failed: ' + e.message, 'error');
     } finally {
@@ -1943,6 +2638,7 @@ function App() {
     <${TabBar} active=${tab} onSwitch=${setTab} counts=${counts} />
     <div class="content">
       <${StatsBar} queue=${queue.data} stats=${stats.data} />
+      <${RepoEligibilityAlerts} diagnostics=${diagnostics.data} repoFilter=${repoFilter} />
       ${tab === 'kanban' && html`
         <div class="filter-bar">
           <div class="status-tabs">
@@ -1978,6 +2674,14 @@ function App() {
           onRemove=${removeItem}
           onRetry=${retryItem}
           onCardClick=${openIssueDetail}
+        />
+      `}
+      ${tab === 'agents' && html`
+        <${LiveAgentsView}
+          health=${health.data}
+          queue=${queue.data}
+          dispatchEvents=${dispatchEvents.data}
+          onInspect=${openIssueDetail}
         />
       `}
       ${tab === 'activity' && html`<${ActivityView} events=${events.data} />`}

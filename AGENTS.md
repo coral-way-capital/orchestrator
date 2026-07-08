@@ -2,9 +2,9 @@
 
 ## What This Is
 
-A dashboard and orchestration layer for GitHub issues owned by [Coral Way Capital (CWC)](https://github.com/coral-way-capital). Issues arrive via webhook or manual GitHub sync, appear on a kanban board, and can be dispatched to autonomous Pi coding agents with customizable prompt templates. Agents implement the issue and open PRs.
+A dashboard and orchestration layer for GitHub issues owned by [Coral Way Capital (CWC)](https://github.com/coral-way-capital). Issues arrive via webhook or manual GitHub sync, appear on a kanban board, and can be dispatched to autonomous coding agents via the Hermes gateway.
 
-**Stack:** Python 3 (stdlib + PyYAML for frontmatter), Preact + HTM SPA, SQLite, systemd, Pi coding agent.
+**Stack:** Python 3 (stdlib + PyYAML), Preact + HTM SPA, SQLite, systemd, Hermes Agent (gateway).
 
 ## Architecture
 

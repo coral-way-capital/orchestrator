@@ -28,6 +28,7 @@ REPO_MAP = {
     "coral-way-capital/tasks-cli": "/home/deploy/apps/tasks-cli",
     "coral-way-capital/agent-configs": "/home/deploy/apps/agent-configs",
     "coral-way-capital/sre": "/home/deploy/apps/sre",
+    "coral-way-capital/visit-merida-chatbot": "/home/deploy/apps/visit-merida-chatbot",
 }
 
 
@@ -57,22 +58,27 @@ def main():
     # Claim items
     to_dispatch = queue["pending"][:slots]
 
-    # Check for same-repo conflicts — only 1 worker per repo per cycle
-    repos_in_progress = {item["repo"] for item in queue["in_progress"]}
-    dispatch_repos = set()
+    # Lock by LOCAL PATH, not GitHub repo name.
+    # Some repos map to the same directory (e.g. rsm-monitor + eckhart → /home/deploy/apps/eckhart).
+    active_paths = {
+        REPO_MAP.get(i["repo"], f"/home/deploy/apps/{i['repo'].split('/')[-1]}")
+        for i in queue["in_progress"]
+    }
+    dispatch_paths = set()
     filtered = []
     for item in to_dispatch:
-        if item["repo"] in repos_in_progress:
-            print(f"SKIP: {item['id']} — repo already has a worker in progress")
+        local_path = REPO_MAP.get(item["repo"], f"/home/deploy/apps/{item['repo'].split('/')[-1]}")
+        if local_path in active_paths:
+            print(f"SKIP: {item['id']} — local path already busy ({local_path})")
             continue
-        if item["repo"] in dispatch_repos:
-            print(f"SKIP: {item['id']} — another item in same repo already dispatching this cycle")
+        if local_path in dispatch_paths:
+            print(f"SKIP: {item['id']} — another item already dispatching to same path ({local_path})")
             continue
-        dispatch_repos.add(item["repo"])
+        dispatch_paths.add(local_path)
         filtered.append(item)
 
     if not filtered:
-        print("\nNO ACTION: All pending items conflict with in-progress repos.")
+        print("\nNO ACTION: All pending items conflict with active local paths.")
         return
 
     print(f"\n=== Dispatching {len(filtered)} workers ===")

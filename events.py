@@ -144,6 +144,16 @@ def query_events(event_type=None, repo=None, item_id=None,
         return [dict(r) for r in rows]
 
 
+def load_decompose_queue():
+    """Return decompose queue from disk as dict."""
+    from pathlib import Path
+    p = Path.home() / ".hermes" / "issue-queue" / "decompose-queue.json"
+    try:
+        return json.load(open(p))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"pending": [], "completed": [], "failed": []}
+
+
 def get_stats():
     """Get aggregate stats for the dashboard."""
     with get_db() as db:
