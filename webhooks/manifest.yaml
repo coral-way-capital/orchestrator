@@ -1,0 +1,144 @@
+subscriptions:
+  cwc-pr-review:
+    description: Auto code review on PRs for all coral-way-capital repos
+    events:
+    - pull_request
+    skills:
+    - github-code-review
+    deliver: log
+    yolo: true
+    skip_actions:
+    - closed
+    - edited
+    - labeled
+    - unlabeled
+    - assigned
+    - unassigned
+    - review_requested
+    - review_request_removed
+    - converted_to_draft
+    - synchronize
+    deliver_extra:
+      repo: '{repository.full_name}'
+      pr_number: '{pull_request.number}'
+    prompt_file: prompts/cwc-pr-review.md
+  cwc-pr-review-cycle:
+    description: Fix-and-rereview cycle for PRs on all coral-way-capital repos
+    events:
+    - pull_request_review
+    skills:
+    - github-code-review
+    deliver: log
+    yolo: true
+    skip_actions:
+    - edited
+    - dismissed
+    deliver_extra:
+      repo: '{repository.full_name}'
+      pr_number: '{pull_request.number}'
+    prompt_file: prompts/cwc-pr-review-cycle.md
+  website-auto-deploy:
+    description: Auto-deploy coralwaycapital.com on push to main
+    events:
+    - push
+    skills: []
+    deliver: discord
+    created_at: '2026-05-18T21:26:34Z'
+    deliver_extra:
+      chat_id: '1468240937833467971'
+    prompt_file: prompts/website-auto-deploy.md
+  cwc-pr-gap-check:
+    description: 'Scope gap analysis: compares PR diff against linked issue requirements'
+    events:
+    - pull_request
+    skills:
+    - github-code-review
+    deliver: log
+    yolo: true
+    skip_actions:
+    - closed
+    - edited
+    - labeled
+    - unlabeled
+    - assigned
+    - unassigned
+    - review_requested
+    - review_request_removed
+    - ready_for_review
+    - converted_to_draft
+    - reopened
+    - synchronize
+    deliver_extra:
+      repo: '{repository.full_name}'
+      pr_number: '{pull_request.number}'
+    prompt_file: prompts/cwc-pr-gap-check.md
+  cwc-ac-verify:
+    description: 'Acceptance criteria verification: checks each AC from linked issues
+      against PR code'
+    events:
+    - pull_request
+    skills:
+    - github-code-review
+    deliver: log
+    yolo: true
+    skip_actions:
+    - closed
+    - edited
+    - labeled
+    - unlabeled
+    - assigned
+    - unassigned
+    - review_requested
+    - review_request_removed
+    - ready_for_review
+    - converted_to_draft
+    - reopened
+    - synchronize
+    deliver_extra:
+      repo: '{repository.full_name}'
+      pr_number: '{pull_request.number}'
+    prompt_file: prompts/cwc-ac-verify.md
+  epic-decomposer:
+    description: Decompose large GitHub issues into child issues (triggered internally
+      by issue webhook receiver)
+    events:
+    - issues
+    skills:
+    - github-issues
+    deliver: discord
+    deliver_extra:
+      chat_id: '1468240937833467971'
+    yolo: true
+    skip_actions:
+    - closed
+    - edited
+    - labeled
+    - unlabeled
+    - assigned
+    - unassigned
+    - reopened
+    - milestoned
+    - demilestoned
+    - transferred
+    - pinned
+    - unpinned
+    - locked
+    - unlocked
+    - deleted
+    prompt_file: prompts/epic-decomposer.md
+  cwc-issue-dispatch:
+    description: Dispatch coding agents for GitHub issues from the orchestrator queue
+    events:
+    - issues
+    skills: []
+    deliver: log
+    yolo: true
+    skip_actions:
+    - closed
+    - edited
+    - labeled
+    - unlabeled
+    - assigned
+    - unassigned
+    prompt_file: prompts/cwc-issue-dispatch.md
+    deliver_extra: {}

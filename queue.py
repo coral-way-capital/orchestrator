@@ -47,6 +47,21 @@ except ImportError:
     def log_event(*a, **kw):
         pass  # Graceful fallback if events.py missing
 
+try:
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from worker_pools import WorkerPoolsManager
+    _POOLS = WorkerPoolsManager(os.path.join(Path.home(), ".hermes", "issue-queue", "worker_pools.json"))
+
+    def _pool_cleanup(item_id):
+        try:
+            _POOLS.remove_worker_by_item(item_id)
+        except Exception:
+            pass
+except ImportError:
+    def _pool_cleanup(item_id):
+        pass
+
 
 def load_queue():
     if QUEUE_FILE.exists():
@@ -62,6 +77,14 @@ def save_queue(queue):
         queue["completed"] = queue["completed"][-MAX_COMPLETED:]
     with open(QUEUE_FILE, "w") as f:
         json.dump(queue, f, indent=2)
+    # Compatibility ledger: queue.json remains the dashboard source of truth,
+    # but every mutation is mirrored into SQLite for transactional dispatch
+    # state, priorities, attempts, and telemetry.
+    try:
+        import issue_queue_db
+        issue_queue_db.sync_from_queue(queue)
+    except Exception:
+        pass
 
 
 def load_sync_state():
@@ -73,6 +96,35 @@ def load_sync_state():
         except (json.JSONDecodeError, OSError):
             return {}
     return {}
+
+
+def discover_org_repos(org="coral-way-capital"):
+    """Return active org repos visible to gh.
+
+    Mission Control must not rely only on repos already present in queue.json:
+    brand-new repos have no queue items yet, so they would never enter the sync
+    universe unless their GitHub webhook fired successfully. Discovery is still
+    filtered later by the assignee guard; this only defines which repos to scan.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [
+                "gh", "repo", "list", org,
+                "--limit", "200",
+                "--json", "nameWithOwner,isArchived",
+                "--jq", ".[] | select(.isArchived == false) | .nameWithOwner",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            return []
+        return sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
+    except Exception:
+        return []
 
 
 def save_sync_state(state):
@@ -128,18 +180,113 @@ def check_linked_prs(repo, issue_number):
     return []
 
 
-def enqueue(repo, issue_number, title, body, author, labels, html_url):
-    """Add an issue to the pending queue. Skips duplicates and unwanted labels."""
+def allowed_assignees():
+    """Return GitHub usernames this orchestrator is allowed to work for.
+
+    Defaults to the authenticated gh user. Override with CWC_ISSUE_ASSIGNEES
+    as a comma-separated list, e.g. "ivanacostarubio,another-user".
+    """
+    configured = os.environ.get("CWC_ISSUE_ASSIGNEES", "").strip()
+    if configured:
+        return {x.strip().lower() for x in configured.split(",") if x.strip()}
+
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return {result.stdout.strip().lower()}
+    except Exception:
+        pass
+
+    # Safe fallback: Ivan is the CWC account currently authenticated on maya.
+    return {"ivanacostarubio"}
+
+
+def _assignee_logins(assignees):
+    logins = []
+    for assignee in assignees or []:
+        if isinstance(assignee, str):
+            login = assignee
+        elif isinstance(assignee, dict):
+            login = assignee.get("login", "")
+        else:
+            login = ""
+        if login:
+            logins.append(login.lower())
+    return logins
+
+
+def is_issue_assigned_to_allowed(assignees):
+    """True iff the issue has at least one allowed assignee.
+
+    Unassigned issues are intentionally not eligible for the orchestrator.
+    """
+    return bool(set(_assignee_logins(assignees)) & allowed_assignees())
+
+
+def visible_unassigned_repos():
+    """Repos where unassigned issues should appear on the board.
+
+    Dispatch remains assignee-gated; this is dashboard visibility only.
+    Override with CWC_VISIBLE_UNASSIGNED_REPOS=owner/repo,owner/repo.
+    """
+    configured = os.environ.get("CWC_VISIBLE_UNASSIGNED_REPOS", "").strip()
+    if configured:
+        return {x.strip() for x in configured.split(",") if x.strip()}
+    return {"coral-way-capital/visit-merida-chatbot"}
+
+
+def enqueue(repo, issue_number, title, body, author, labels, html_url, assignees=None, require_allowed_assignee=True):
+    """Add an issue to the pending queue. Skips duplicates, unwanted labels, and non-CWC-assigned work."""
     queue = load_queue()
     item_id = f"{repo}#{issue_number}"
 
-    # Skip if already in pending or in_progress
-    all_ids = (
-        [x["id"] for x in queue["pending"]]
-        + [x["id"] for x in queue["in_progress"]]
-    )
-    if item_id in all_ids:
-        print(f"SKIP: {item_id} already in queue")
+    # If already queued, refresh mutable GitHub metadata (especially assignees).
+    # Assignment can happen after initial visibility sync; stale [] assignees make
+    # an item visible but non-dispatchable forever unless we refresh here.
+    for bucket in ("pending", "in_progress"):
+        for existing in queue.get(bucket, []):
+            if existing.get("id") == item_id:
+                old_assignees = list(existing.get("assignees", []))
+                old_eligible = is_issue_assigned_to_allowed(old_assignees)
+                changed = False
+                updates = {
+                    "title": title,
+                    "body": body or "",
+                    "author": author,
+                    "labels": labels,
+                    "assignees": _assignee_logins(assignees),
+                    "html_url": html_url,
+                }
+                for key, value in updates.items():
+                    if existing.get(key) != value:
+                        existing[key] = value
+                        changed = True
+                if changed:
+                    save_queue(queue)
+                    log_event("issue.metadata_refreshed", item_id=item_id, repo=repo,
+                              issue_number=issue_number, title=title,
+                              details={"bucket": bucket, "old_assignees": old_assignees, "assignees": _assignee_logins(assignees), "labels": labels})
+                    new_eligible = is_issue_assigned_to_allowed(existing.get("assignees", []))
+                    if old_eligible != new_eligible:
+                        log_event("issue.eligibility_changed", item_id=item_id, repo=repo,
+                                  issue_number=issue_number, title=title,
+                                  details={"from": old_eligible, "to": new_eligible, "assignees": existing.get("assignees", []), "allowed": sorted(allowed_assignees())})
+                    print(f"REFRESHED: {item_id} metadata in {bucket}")
+                else:
+                    print(f"SKIP: {item_id} already in queue")
+                return False
+
+    if require_allowed_assignee and not is_issue_assigned_to_allowed(assignees):
+        allowed = ", ".join(sorted(allowed_assignees()))
+        actual = ", ".join(_assignee_logins(assignees)) or "unassigned"
+        print(f"SKIP: {item_id} assignees={actual}; allowed={allowed}")
+        log_event("issue.skipped_unassigned", item_id=item_id, repo=repo,
+                  issue_number=issue_number, title=title,
+                  details={"assignees": _assignee_logins(assignees), "allowed": sorted(allowed_assignees())})
         return False
 
     # Skip unwanted labels
@@ -163,6 +310,7 @@ def enqueue(repo, issue_number, title, body, author, labels, html_url):
         "body": body or "",
         "author": author,
         "labels": labels,
+        "assignees": _assignee_logins(assignees),
         "html_url": html_url,
         "enqueued_at": datetime.now(timezone.utc).isoformat(),
         "started_at": None,
@@ -175,23 +323,67 @@ def enqueue(repo, issue_number, title, body, author, labels, html_url):
     save_queue(queue)
     log_event("issue.enqueued", item_id=item_id, repo=repo,
               issue_number=issue_number, title=title,
-              details={"author": author, "labels": labels})
+              details={"author": author, "labels": labels, "assignees": _assignee_logins(assignees)})
+    log_event("issue.visible", item_id=item_id, repo=repo,
+              issue_number=issue_number, title=title,
+              details={"source": "enqueue", "assignees": _assignee_logins(assignees), "visible_unassigned": repo in visible_unassigned_repos()})
+    log_event("issue.eligibility_changed", item_id=item_id, repo=repo,
+              issue_number=issue_number, title=title,
+              details={"from": None, "to": is_issue_assigned_to_allowed(item.get("assignees", [])), "assignees": item.get("assignees", []), "allowed": sorted(allowed_assignees())})
     print(f"ENQUEUED: {item_id} — {title}")
     return True
+
+
+def _pool_reap():
+    try:
+        from worker_pools import WorkerPoolsManager
+        mgr = WorkerPoolsManager(os.path.join(Path.home(), ".hermes", "issue-queue", "worker_pools.json"))
+        mgr.reap_stale()
+    except Exception:
+        pass
+
+
+def _pool_register(item_id, repo):
+    try:
+        from worker_pools import WorkerPoolsManager
+        mgr = WorkerPoolsManager(os.path.join(Path.home(), ".hermes", "issue-queue", "worker_pools.json"))
+        mgr.register_worker(item_id, repo)
+    except Exception:
+        pass
 
 
 def next_pending(n=1):
     """Get up to N pending items and move them to in_progress."""
     queue = load_queue()
-    items = queue["pending"][:n]
-    for item in items:
+    _pool_reap()
+    claimed = []
+    # Priority router: not FIFO. Work client/prod/p0/bug issues first while
+    # preserving enqueue order inside equal priority bands.
+    try:
+        import issue_queue_db
+        pending_items = sorted(list(queue["pending"]), key=issue_queue_db.priority_sort_key)
+    except Exception:
+        pending_items = list(queue["pending"])
+
+    for item in pending_items:
+        if not is_issue_assigned_to_allowed(item.get("assignees", [])):
+            log_event("issue.skipped_unassigned", item_id=item.get("id"), repo=item.get("repo"),
+                      issue_number=item.get("issue_number"), title=item.get("title"),
+                      details={"source": "claim_guard", "assignees": item.get("assignees", []), "allowed": sorted(allowed_assignees())})
+            continue
+        if item["repo"] in {w.get("repo") for w in __import__("worker_pools", fromlist=["WorkerPoolsManager"]).WorkerPoolsManager(os.path.join(Path.home(), ".hermes", "issue-queue", "worker_pools.json")).workers() if w.get("state") == "active"}:
+            continue
         item["started_at"] = datetime.now(timezone.utc).isoformat()
         queue["pending"].remove(item)
         queue["in_progress"].append(item)
+        claimed.append(item)
         log_event("issue.claimed", item_id=item["id"], repo=item.get("repo"),
                   issue_number=item.get("issue_number"), title=item.get("title"))
+        _pool_register(item["id"], item.get("repo"))
+        if len(claimed) >= n:
+            break
     save_queue(queue)
-    return items
+    return claimed
 
 
 def complete(item_id, pr_number=None):
@@ -204,6 +396,7 @@ def complete(item_id, pr_number=None):
             queue["in_progress"].remove(item)
             queue["completed"].append(item)
             save_queue(queue)
+            _pool_cleanup(item_id)
             log_event("issue.completed", item_id=item_id, repo=item.get("repo"),
                       issue_number=item.get("issue_number"), title=item.get("title"),
                       details={"pr_number": pr_number})
@@ -223,6 +416,7 @@ def fail(item_id, error):
             queue["in_progress"].remove(item)
             queue["failed"].append(item)
             save_queue(queue)
+            _pool_cleanup(item_id)
             log_event("issue.failed", item_id=item_id, repo=item.get("repo"),
                       issue_number=item.get("issue_number"), title=item.get("title"),
                       details={"error": str(error)[:200]})
@@ -289,6 +483,7 @@ def reset(item_id):
             if item["id"] == item_id:
                 queue[lst_name].remove(item)
                 save_queue(queue)
+                _pool_cleanup(item_id)
                 log_event("issue.reset", item_id=item_id, repo=item.get("repo"),
                           issue_number=item.get("issue_number"), title=item.get("title"),
                           details={"from_list": lst_name})
@@ -378,6 +573,7 @@ def auto_close_item(item_id, source="sync_prune"):
                 queue[list_name].remove(item)
                 queue["completed"].append(item)
                 save_queue(queue)
+                _pool_cleanup(item_id)
                 return True
     return False
 
@@ -404,10 +600,13 @@ def sync_github_issues(repo_full_name=None):
     if repo_full_name:
         repos = [repo_full_name]
     else:
-        repos = list(set(
+        queued_repos = {
             x["repo"] for x in
             queue["pending"] + queue["in_progress"] + queue["completed"] + queue["failed"]
-        ))
+        }
+        # Include sync-state repos for continuity and discover all active org repos
+        # so newly-created repos with no existing queue items are scanned.
+        repos = sorted(queued_repos | set(sync_state) | set(discover_org_repos()))
 
     sync_result = {"repos": {}, "totals": {"added": 0, "closed": 0, "unchanged": 0}}
     now = datetime.now(timezone.utc)
@@ -419,47 +618,81 @@ def sync_github_issues(repo_full_name=None):
         is_first_sync = last_sync is None
 
         try:
-            # Build fetch URL — incremental vs full
-            if is_first_sync:
-                url = f"repos/{repo}/issues?state=open&per_page=100"
-            else:
-                url = f"repos/{repo}/issues?state=all&per_page=100&since={last_sync}"
-
             timeout = 120 if is_first_sync else 30
 
-            result = subprocess.run(
-                ["gh", "api", "--paginate", url, "--jq",
-                 '.[] | select(.pull_request == null)'
-                 '| {number, state, title, body, html_url, user: .user.login,'
-                 '   labels: [.labels[].name], updated_at}'],
-                capture_output=True, text=True, timeout=timeout
-            )
+            issues_by_number = {}
+            urls = []
+            if repo in visible_unassigned_repos():
+                # Dashboard visibility: include all open issues for explicitly opted-in repos.
+                urls.append(f"repos/{repo}/issues?state=open&per_page=100")
+            else:
+                # Default safety: only bring assigned issues onto the board.
+                for assignee in sorted(allowed_assignees()):
+                    urls.append(f"repos/{repo}/issues?state=open&per_page=100&assignee={assignee}")
 
-            if result.returncode != 0:
-                repo_result["errors"].append(result.stderr[:200])
+            for url in urls:
+                result = subprocess.run(
+                    ["gh", "api", "--paginate", url, "--jq",
+                     '.[] | select(.pull_request == null)'
+                     '| {number, state, title, body, html_url, user: .user.login,'
+                     '   labels: [.labels[].name], assignees: [.assignees[].login], updated_at}'],
+                    capture_output=True, text=True, timeout=timeout
+                )
+
+                if result.returncode != 0:
+                    repo_result["errors"].append(result.stderr[:200])
+                    continue
+
+                for line in result.stdout.strip().split("\n"):
+                    line = line.strip()
+                    if line:
+                        try:
+                            issue = json.loads(line)
+                            issues_by_number[issue["number"]] = issue
+                        except json.JSONDecodeError:
+                            continue
+
+            issues = list(issues_by_number.values())
+            if repo_result["errors"] and not issues:
                 sync_result["repos"][repo] = repo_result
                 continue
-
-            # Parse JSONL output
-            issues = []
-            for line in result.stdout.strip().split("\n"):
-                line = line.strip()
-                if line:
-                    try:
-                        issues.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
 
             open_by_number = {i["number"]: i for i in issues if i.get("state") == "open"}
             closed_by_number = {i["number"]: i for i in issues if i.get("state") == "closed"}
 
+            # Full open-assigned set used ONLY for safe pruning. Incremental sync
+            # may omit unchanged assigned issues, so never infer unassignment from
+            # the incremental result alone.
+            assigned_open_numbers = set(open_by_number)
+            if not is_first_sync:
+                full_assigned_open = {}
+                for assignee in sorted(allowed_assignees()):
+                    full_url = f"repos/{repo}/issues?state=open&per_page=100&assignee={assignee}"
+                    full_result = subprocess.run(
+                        ["gh", "api", "--paginate", full_url, "--jq",
+                         '.[] | select(.pull_request == null)'
+                         '| {number, state, title, body, html_url, user: .user.login,'
+                         '   labels: [.labels[].name], assignees: [.assignees[].login], updated_at}'],
+                        capture_output=True, text=True, timeout=120
+                    )
+                    if full_result.returncode != 0:
+                        repo_result["errors"].append(full_result.stderr[:200])
+                        continue
+                    for line in full_result.stdout.strip().split("\n"):
+                        line = line.strip()
+                        if line:
+                            try:
+                                issue = json.loads(line)
+                                full_assigned_open[issue["number"]] = issue
+                            except json.JSONDecodeError:
+                                continue
+                assigned_open_numbers = set(full_assigned_open)
+                for num, issue in full_assigned_open.items():
+                    open_by_number.setdefault(num, issue)
+
             # --- Phase 1: Enqueue new open issues ---
             for num, issue in open_by_number.items():
                 item_id = f"{repo}#{num}"
-                if item_id in existing_ids:
-                    repo_result["unchanged"] += 1
-                    continue
-
                 labels = issue.get("labels", [])
                 if any(l.lower() in skip_labels for l in labels):
                     repo_result["unchanged"] += 1
@@ -473,6 +706,8 @@ def sync_github_issues(repo_full_name=None):
                     author=issue.get("user", ""),
                     labels=labels,
                     html_url=issue.get("html_url", ""),
+                    assignees=issue.get("assignees", []),
+                    require_allowed_assignee=repo not in visible_unassigned_repos(),
                 )
                 if enqueued:
                     repo_result["added"].append(item_id)
@@ -480,6 +715,8 @@ def sync_github_issues(repo_full_name=None):
                     log_event("issue.synced", item_id=item_id, repo=repo,
                               issue_number=issue["number"], title=issue.get("title", ""),
                               details={"source": "github_sync", "labels": labels})
+                else:
+                    repo_result["unchanged"] += 1
 
             # --- Phase 2: Prune closed issues ---
             queue = load_queue()  # reload after enqueues
@@ -497,6 +734,10 @@ def sync_github_issues(repo_full_name=None):
                     # First sync: not in open set → verify individually
                     if verify_issue_closed(repo, issue_num):
                         items_to_close.append(item)
+
+            # Visibility is separate from dispatch eligibility. Keep unassigned
+            # items in pending so they appear in Mission Control; next_pending()
+            # refuses to claim them until assigned to an allowed user.
 
             for item in items_to_close:
                 auto_close_item(item["id"], source="sync_prune")
