@@ -188,8 +188,6 @@ def reconcile_in_progress(log_path: str | Path = DEFAULT_GATEWAY_LOG) -> list[di
         if not outcome:
             continue
 
-        _write_trace_final(item, outcome)
-        _update_agent_trace(item, outcome)
         if outcome["status"] == "completed":
             changed = queue_mod.complete(item["id"], outcome.get("pr_number"))
         elif outcome["status"] == "non_contract":
@@ -202,12 +200,15 @@ def reconcile_in_progress(log_path: str | Path = DEFAULT_GATEWAY_LOG) -> list[di
             if linked_pr and linked_pr.get("pr_number"):
                 outcome["status"] = "completed"
                 outcome["pr_number"] = linked_pr.get("pr_number")
+                outcome.pop("error_summary", None)
                 changed = queue_mod.complete(item["id"], outcome.get("pr_number"))
             else:
                 changed = queue_mod.fail(item["id"], outcome.get("error_summary") or "Worker finished without contract output")
         else:
             changed = queue_mod.fail(item["id"], outcome.get("error_summary") or "FAILED: gateway worker failed")
         if changed:
+            _write_trace_final(item, outcome)
+            _update_agent_trace(item, outcome)
             record = {
                 "item_id": item["id"],
                 "repo": item.get("repo"),
