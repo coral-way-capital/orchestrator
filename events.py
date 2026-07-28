@@ -15,7 +15,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import contextmanager
 
-DB_PATH = Path.home() / ".hermes" / "issue-queue" / "events.db"
+DB_PATH = Path(os.environ.get(
+    "CWC_EVENTS_DB",
+    str(Path.home() / ".hermes" / "issue-queue" / "events.db"),
+))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (

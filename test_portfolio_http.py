@@ -2,6 +2,7 @@
 """HTTP behavior tests for Mission Control portfolio endpoints."""
 
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -12,7 +13,12 @@ from urllib.request import urlopen
 
 import portfolio
 from test_portfolio import manifest
-from webhook_receiver import IssueWebhookHandler
+
+_EVENTS_TEMP_DIR = tempfile.TemporaryDirectory()
+_ORIGINAL_EVENTS_DB = os.environ.get("CWC_EVENTS_DB")
+os.environ["CWC_EVENTS_DB"] = str(Path(_EVENTS_TEMP_DIR.name) / "events.db")
+
+from webhook_receiver import IssueWebhookHandler  # noqa: E402
 
 
 class PortfolioHTTPTests(unittest.TestCase):
@@ -35,6 +41,18 @@ class PortfolioHTTPTests(unittest.TestCase):
         cls.thread.join(timeout=2)
         portfolio.DEFAULT_MANIFEST_PATH = cls.original_manifest_path
         cls.tempdir.cleanup()
+        if _ORIGINAL_EVENTS_DB is None:
+            os.environ.pop("CWC_EVENTS_DB", None)
+        else:
+            os.environ["CWC_EVENTS_DB"] = _ORIGINAL_EVENTS_DB
+        _EVENTS_TEMP_DIR.cleanup()
+
+    def test_event_database_is_isolated_from_live_state(self):
+        import events
+
+        live_path = Path.home() / ".hermes" / "issue-queue" / "events.db"
+        self.assertNotEqual(events.DB_PATH.resolve(), live_path.resolve())
+        self.assertTrue(events.DB_PATH.exists())
 
     def get_json(self, path):
         with urlopen(self.base_url + path, timeout=5) as response:
