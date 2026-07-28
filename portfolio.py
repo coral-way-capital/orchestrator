@@ -100,6 +100,17 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             raise PortfolioError(f"duplicate project id: {project_id}")
         seen_ids.add(project_id)
 
+        blockers = project["blockers"]
+        if not isinstance(blockers, list):
+            raise PortfolioError(f"{project_id}: blockers must be a list")
+        for blocker in blockers:
+            if not isinstance(blocker, dict):
+                raise PortfolioError(f"{project_id}: blocker items must be objects")
+
+        evidence_items = project["evidence"]
+        if not isinstance(evidence_items, list):
+            raise PortfolioError(f"{project_id}: evidence must be a list")
+
         dimensions = project["dimensions"]
         if not isinstance(dimensions, dict):
             raise PortfolioError(f"{project_id}: dimensions must be an object")
@@ -114,19 +125,22 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             if not isinstance(dimension, dict):
                 raise PortfolioError(f"{project_id}: {dimension_name} must be an object")
             rating = dimension.get("rating")
-            if not isinstance(rating, (int, float)) or not 0 <= rating <= 5:
-                raise PortfolioError(f"{project_id}: {dimension_name} rating must be between 0 and 5")
+            if type(rating) is not int or not 0 <= rating <= 5:
+                raise PortfolioError(f"{project_id}: {dimension_name} rating must be an integer between 0 and 5")
             if not str(dimension.get("rationale", "")).strip():
                 raise PortfolioError(f"{project_id}: {dimension_name} rationale is required")
-            if not isinstance(dimension.get("evidence_ids", []), list):
+            evidence_refs = dimension.get("evidence_ids", [])
+            if not isinstance(evidence_refs, list):
                 raise PortfolioError(f"{project_id}: {dimension_name} evidence_ids must be a list")
+            if any(not isinstance(evidence_id, str) or not evidence_id.strip() for evidence_id in evidence_refs):
+                raise PortfolioError(f"{project_id}: {dimension_name} evidence_ids must be non-empty strings")
 
         evidence_ids: set[str] = set()
-        for evidence in project["evidence"]:
+        for evidence in evidence_items:
             if not isinstance(evidence, dict):
                 raise PortfolioError(f"{project_id}: evidence items must be objects")
             evidence_id = evidence.get("id")
-            if not evidence_id or evidence_id in evidence_ids:
+            if not isinstance(evidence_id, str) or not evidence_id.strip() or evidence_id in evidence_ids:
                 raise PortfolioError(f"{project_id}: evidence ids must be present and unique")
             evidence_ids.add(evidence_id)
             if evidence.get("status") not in ALLOWED_EVIDENCE_STATUSES:
@@ -259,7 +273,7 @@ def build_portfolio(manifest: dict[str, Any], *, as_of: date | None = None) -> d
     as_of = as_of or date.today()
     policy = copy.deepcopy(manifest["policy"])
     projects = [score_project(item, policy["weights"], as_of=as_of) for item in manifest["projects"]]
-    projects.sort(key=lambda item: (-item["score"], item["id"]))
+    projects.sort(key=lambda item: -item["score"])
     for rank, item in enumerate(projects, start=1):
         item["rank"] = rank
         item["advice_brief"] = build_advice_brief(item)

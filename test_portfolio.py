@@ -121,6 +121,12 @@ class PortfolioScoreTests(unittest.TestCase):
         self.assertEqual([p["id"] for p in result["projects"]], ["high", "low"])
         self.assertEqual(result["projects"][0]["rank"], 1)
 
+    def test_equal_score_ties_preserve_manifest_order(self):
+        first = project("zeta")
+        second = project("alpha")
+        result = build_portfolio(manifest([first, second]), as_of=date(2026, 7, 27))
+        self.assertEqual([p["id"] for p in result["projects"]], ["zeta", "alpha"])
+
     def test_active_client_outcomes_over_limit_create_wip_violation(self):
         projects = [project("one"), project("two"), project("three")]
         result = build_portfolio(manifest(projects), as_of=date(2026, 7, 27))
@@ -156,8 +162,30 @@ class PortfolioValidationTests(unittest.TestCase):
     def test_ratings_must_be_between_zero_and_five(self):
         invalid = project()
         invalid["dimensions"]["finishability"]["rating"] = 6
-        with self.assertRaisesRegex(PortfolioError, "between 0 and 5"):
+        with self.assertRaisesRegex(PortfolioError, "integer between 0 and 5"):
             validate_manifest(manifest([invalid]))
+
+    def test_ratings_must_be_integers(self):
+        invalid = project()
+        invalid["dimensions"]["finishability"]["rating"] = 2.5
+        with self.assertRaisesRegex(PortfolioError, "integer between 0 and 5"):
+            validate_manifest(manifest([invalid]))
+
+        invalid_bool = project()
+        invalid_bool["dimensions"]["finishability"]["rating"] = True
+        with self.assertRaisesRegex(PortfolioError, "integer between 0 and 5"):
+            validate_manifest(manifest([invalid_bool]))
+
+    def test_evidence_and_blockers_must_be_lists(self):
+        invalid_evidence = project()
+        invalid_evidence["evidence"] = None
+        with self.assertRaisesRegex(PortfolioError, "evidence must be a list"):
+            validate_manifest(manifest([invalid_evidence]))
+
+        invalid_blockers = project()
+        invalid_blockers["blockers"] = None
+        with self.assertRaisesRegex(PortfolioError, "blockers must be a list"):
+            validate_manifest(manifest([invalid_blockers]))
 
 
 if __name__ == "__main__":

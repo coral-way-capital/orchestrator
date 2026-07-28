@@ -58,6 +58,21 @@ class PortfolioHTTPTests(unittest.TestCase):
         self.assertEqual(payload["project_id"], "alpha")
         self.assertIn("Finish gate", payload["brief"])
 
+    def test_malformed_manifest_returns_safe_warning(self):
+        original = self.manifest_path.read_text(encoding="utf-8")
+        bad_manifest = manifest()
+        bad_manifest["projects"][0]["evidence"] = None
+        self.manifest_path.write_text(json.dumps(bad_manifest), encoding="utf-8")
+        try:
+            with self.assertRaises(HTTPError) as error:
+                self.get_json("/api/portfolio")
+            self.assertEqual(error.exception.code, 503)
+            payload = json.loads(error.exception.read().decode("utf-8"))
+            self.assertEqual(payload["error"], "portfolio unavailable")
+            self.assertEqual(payload["projects"], [])
+        finally:
+            self.manifest_path.write_text(original, encoding="utf-8")
+
     def test_unknown_project_returns_not_found(self):
         with self.assertRaises(HTTPError) as error:
             self.get_json("/api/portfolio/does-not-exist")
