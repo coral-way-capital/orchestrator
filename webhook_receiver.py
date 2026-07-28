@@ -457,6 +457,35 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 self._json_response({"error": str(e)}, 500)
             return
 
+        if path == "/api/heartbeat":
+            # Worker heartbeat: stamp last_heartbeat_at + optional phase/progress.
+            # Required by issue #16 so the reaper distinguishes live long jobs
+            # from dead workers. Body: {"worker_id"|"item_id", "phase", "progress", "message"}
+            try:
+                payload = json.loads(raw_body)
+            except json.JSONDecodeError:
+                self._json_response({"error": "Invalid JSON"}, 400)
+                return
+            worker_id = payload.get("worker_id")
+            item_id = payload.get("item_id")
+            if not worker_id and not item_id:
+                self._json_response({"error": "worker_id or item_id required"}, 400)
+                return
+            updated = _pool_mgr.record_heartbeat(
+                worker_id=worker_id, item_id=item_id,
+                phase=payload.get("phase"),
+                progress=payload.get("progress"),
+                message=payload.get("message"),
+            )
+            if not updated:
+                self._json_response({"error": "worker not found"}, 404)
+                return
+            log_event("worker.heartbeat", item_id=item_id,
+                      details={"worker_id": worker_id, "phase": payload.get("phase"),
+                               "progress": payload.get("progress")})
+            self._json_response({"ok": True, "worker_id": worker_id, "item_id": item_id})
+            return
+
         if path == "/api/dispatch":
             try:
                 payload = json.loads(raw_body)
@@ -932,7 +961,19 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     "failed": len(dq["failed"]),
                 },
                 "worker_pools": _pool_mgr.health(),
-                "reaped_stale": [{"id": w.get("id"), "item_id": w.get("item_id")} for w in stale],
+                "worker_liveness": [
+                    {"worker_id": r.worker_id, "item_id": r.item_id,
+                     "pid": r.pid, "state": r.state, "stale": r.stale,
+                     "process_alive": r.process_alive,
+                     "evidence_source": r.evidence_source,
+                     "heartbeat_age_seconds": r.heartbeat_age_seconds,
+                     "reason": r.reason}
+                    for r in _pool_mgr.classify_liveness()
+                ],
+                "reaped_stale": [
+                    {"id": w.get("worker_id"), "item_id": w.get("item_id")}
+                    for w in stale
+                ],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
         elif path == "/health":
@@ -1274,6 +1315,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             dispatch_id = telemetry.get("dispatch_id")
             session_id = telemetry.get("session_id")
             agent_pid = telemetry.get("pid")
+            branch = telemetry.get("branch") or item.get("branch")
+            worktree = telemetry.get("worktree") or item.get("worktree") or local_path
 
             # Track the dispatch. Gateway may not expose PID yet; diagnostics
             # below make that explicit for worker pool and API consumers.
@@ -1296,6 +1339,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     i["status_url"] = telemetry.get("status_url")
                     i["status_path"] = telemetry.get("status_path")
                     i["session_path"] = telemetry.get("session_path")
+                    i["branch"] = branch
+                    i["worktree"] = worktree
                     i["telemetry_missing"] = telemetry.get("telemetry_missing", [])
                     i["liveness_reliable"] = telemetry.get("liveness_reliable", False)
                     i["agent_log"] = telemetry.get("log_path")
@@ -1313,6 +1358,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 "dispatch_id": dispatch_id,
                 "session_id": session_id,
                 "pid": agent_pid,
+                "branch": branch,
+                "worktree": worktree,
                 "model_provider": model_provider,
                 "model": model_name,
                 "prompt_id": prompt_id,
@@ -1345,6 +1392,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 transcript_path=telemetry.get("transcript_path"),
                 status_url=telemetry.get("status_url"),
                 status_path=telemetry.get("status_path"),
+                session_path=telemetry.get("session_path"),
+                branch=branch, worktree=worktree,
                 telemetry_missing=telemetry.get("telemetry_missing", []),
                 liveness_reliable=telemetry.get("liveness_reliable", False),
             )
@@ -1356,6 +1405,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     transcript_path=telemetry.get("transcript_path"),
                     status_url=telemetry.get("status_url"),
                     status_path=telemetry.get("status_path"),
+                    session_path=telemetry.get("session_path"),
+                    branch=branch, worktree=worktree,
                     telemetry_missing=telemetry.get("telemetry_missing", []),
                     liveness_reliable=telemetry.get("liveness_reliable", False),
                 )

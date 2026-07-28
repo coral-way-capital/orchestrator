@@ -61,7 +61,7 @@ class WorkerPoolsManager:
         existing = [int(w.get("id", "worker-0").split("-")[-1]) for w in self._pools.get("workers", []) if w.get("id", "").startswith("worker-")]
         return f"worker-{(max(existing) + 1) if existing else 1}"
 
-    def register_worker(self, item_id, repo, started_at=None, pid=None, item_pid=None, session_id=None, dispatch_id=None, lease_seconds=2700, telemetry=None, log_path=None, transcript_path=None, status_url=None, status_path=None, telemetry_missing=None, liveness_reliable=None):
+    def register_worker(self, item_id, repo, started_at=None, pid=None, item_pid=None, session_id=None, dispatch_id=None, lease_seconds=2700, telemetry=None, log_path=None, transcript_path=None, status_url=None, status_path=None, session_path=None, branch=None, worktree=None, telemetry_missing=None, liveness_reliable=None):
         # Reload from disk to avoid stale in-memory state when external
         # processes (queue.py CLI, manual resets) have modified the pool file.
         self._pools = self._load()
@@ -94,6 +94,9 @@ class WorkerPoolsManager:
             "transcript_path": transcript_path,
             "status_url": status_url,
             "status_path": status_path,
+            "session_path": session_path,
+            "branch": branch,
+            "worktree": worktree,
             "telemetry": telemetry or {},
             "telemetry_missing": telemetry_missing or [],
             "liveness_reliable": bool(liveness_reliable),
@@ -101,6 +104,8 @@ class WorkerPoolsManager:
             "claimed_at": datetime.now(timezone.utc).isoformat(),
             "lease_expires_at": lease_expires_at,
             "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            "phase": None,
+            "progress": None,
             "state": "active",
             "dispatches": 0,
             "last_status": "unknown",
@@ -110,7 +115,7 @@ class WorkerPoolsManager:
         self._save(pools)
         return worker
 
-    def refresh_worker(self, worker_id, pid=None, item_pid=None, started_at=None, state=None, last_status=None, dispatches=None, session_id=None, dispatch_id=None, heartbeat=True, telemetry=None, log_path=None, transcript_path=None, status_url=None, status_path=None, telemetry_missing=None, liveness_reliable=None):
+    def refresh_worker(self, worker_id, pid=None, item_pid=None, started_at=None, state=None, last_status=None, dispatches=None, session_id=None, dispatch_id=None, heartbeat=True, telemetry=None, log_path=None, transcript_path=None, status_url=None, status_path=None, session_path=None, branch=None, worktree=None, telemetry_missing=None, liveness_reliable=None):
         pools = self._load()
         worker = self._find_worker_in(pools, worker_id)
         if not worker:
@@ -139,6 +144,12 @@ class WorkerPoolsManager:
             worker["status_url"] = status_url
         if status_path is not None:
             worker["status_path"] = status_path
+        if session_path is not None:
+            worker["session_path"] = session_path
+        if branch is not None:
+            worker["branch"] = branch
+        if worktree is not None:
+            worker["worktree"] = worktree
         if telemetry is not None:
             worker["telemetry"] = telemetry
         if telemetry_missing is not None:
@@ -150,16 +161,49 @@ class WorkerPoolsManager:
         self._save(pools)
         return True
 
+    def record_heartbeat(self, worker_id=None, *, item_id=None, phase=None, progress=None, message=None):
+        """Record a heartbeat with optional phase/progress for a worker.
+
+        Delegates to :func:`liveness.record_heartbeat`. The heartbeat
+        stamps ``last_heartbeat_at`` to now and stores ``phase``/``progress``
+        so the reaper can distinguish live long jobs from dead workers.
+        """
+        try:
+            import liveness as _liveness
+            return _liveness.record_heartbeat(
+                self, worker_id=worker_id, item_id=item_id,
+                phase=phase, progress=progress, message=message,
+            )
+        except Exception:
+            return False
+
+    def classify_liveness(self):
+        """Return liveness classification for all workers.
+
+        Delegates to :func:`liveness.classify_workers`.
+        """
+        try:
+            import liveness as _liveness
+            return _liveness.classify_workers(self.workers())
+        except Exception:
+            return []
+
     def remove_worker(self, worker_id):
         pools = self._load()
-        workers = [w for w in pools.get("workers", []) if w.get("id") != worker_id]
+        previous = pools.get("workers", [])
+        workers = [w for w in previous if w.get("id") != worker_id]
+        if len(workers) == len(previous):
+            return False
         pools["workers"] = workers
         self._save(pools)
         return True
 
     def remove_worker_by_item(self, item_id):
         pools = self._load()
-        workers = [w for w in pools.get("workers", []) if w.get("item_id") != item_id]
+        previous = pools.get("workers", [])
+        workers = [w for w in previous if w.get("item_id") != item_id]
+        if len(workers) == len(previous):
+            return False
         pools["workers"] = workers
         self._save(pools)
         return True
@@ -185,7 +229,19 @@ class WorkerPoolsManager:
                 return w
         return None
 
-    def liveness_probe(self, worker_id=None, item_id=None, repo=None):
+    def liveness_probe(
+        self,
+        worker_id=None,
+        item_id=None,
+        repo=None,
+        *,
+        now=None,
+        process_probe=None,
+        session_probe=None,
+    ):
+        """Return worker diagnostics using the canonical two-signal model."""
+        import liveness as _liveness
+
         pools = self._load()
         workers = pools.get("workers", [])
         if worker_id:
@@ -195,39 +251,21 @@ class WorkerPoolsManager:
         elif repo:
             workers = [w for w in workers if w.get("repo") == repo]
 
-        now = datetime.now(timezone.utc)
         results = []
         worker = None
         for w in workers:
-            pid = w.get("pid") or w.get("item_pid")
-            is_running = False
-            if pid:
-                try:
-                    rc = os.kill(int(pid), 0)
-                    is_running = True
-                except ProcessLookupError:
-                    is_running = False
-                except Exception:
-                    is_running = False
-
-            started_at = w.get("started_at") or w.get("claimed_at")
-            state = w.get("state")
-            if not is_running and started_at:
-                try:
-                    started = datetime.fromisoformat(started_at)
-                    if (now - started).total_seconds() > 3600:
-                        state = "stale"
-                    elif not is_running:
-                        state = "stale"
-                except Exception:
-                    if not is_running:
-                        state = "stale"
+            classification = _liveness.classify_worker(
+                w,
+                now=now,
+                process_probe=process_probe or _liveness.default_process_probe,
+                session_probe=session_probe,
+            )
 
             results.append({
                 "id": w.get("id"),
                 "item_id": w.get("item_id"),
                 "repo": w.get("repo"),
-                "pid": pid,
+                "pid": classification.pid,
                 "session_id": w.get("session_id"),
                 "dispatch_id": w.get("dispatch_id"),
                 "log_path": w.get("log_path"),
@@ -235,9 +273,12 @@ class WorkerPoolsManager:
                 "status_url": w.get("status_url"),
                 "telemetry_missing": w.get("telemetry_missing", []),
                 "liveness_reliable": bool(w.get("liveness_reliable")),
-                "is_running": is_running,
-                "state": state,
-                "started_at": started_at,
+                "is_running": classification.process_alive,
+                "state": classification.state,
+                "stale": classification.stale,
+                "heartbeat_age_seconds": classification.heartbeat_age_seconds,
+                "reason": classification.reason,
+                "started_at": w.get("started_at") or w.get("claimed_at"),
                 "last_status": w.get("last_status"),
             })
             worker = w
@@ -245,37 +286,36 @@ class WorkerPoolsManager:
         return results, worker
 
     def reap_stale(self, stale_threshold=3600):
-        pools = self._load()
-        now = datetime.now(timezone.utc)
-        stale = []
-        for w in list(pools.get("workers", [])):
-            pid = w.get("pid") or w.get("item_pid")
-            is_running = False
-            if pid:
-                try:
-                    os.kill(int(pid), 0)
-                    is_running = True
-                except Exception:
-                    is_running = False
+        """Reap workers that are stale AND confirmed dead.
 
-            started_at = w.get("started_at") or w.get("claimed_at")
-            lease_expires_at = w.get("lease_expires_at")
-            if not is_running and started_at:
-                try:
-                    if lease_expires_at and now > datetime.fromisoformat(lease_expires_at):
-                        stale.append(w)
-                        pools["workers"].remove(w)
-                        continue
-                    started = datetime.fromisoformat(started_at)
-                    if (now - started).total_seconds() > stale_threshold:
-                        stale.append(w)
-                        pools["workers"].remove(w)
-                except Exception:
-                    pass
+        .. deprecated-logic::
+            Previous versions reaped based on elapsed time alone, which
+            violated issue #16 ("Live long jobs are never reaped by time
+            alone"). This now delegates to :func:`liveness.reap_dead_workers`
+            which requires BOTH a stale heartbeat AND a failed
+            process/session check before reaping. A live process is never
+            reaped regardless of how much time has elapsed.
 
-        if stale:
-            self._save(pools)
-        return stale
+        ``stale_threshold`` is accepted for backward compatibility but no
+            longer causes reaping by itself — it only feeds the heartbeat
+            staleness comparison.
+        """
+        try:
+            import liveness as _liveness
+            # Use the heartbeat timeout if caller passed the legacy
+            # stale_threshold; otherwise default to the 60 s heartbeat SLA.
+            heartbeat_timeout = (
+                stale_threshold if stale_threshold != 3600
+                else _liveness.HEARTBEAT_TIMEOUT_SECONDS
+            )
+            result = _liveness.reap_dead_workers(
+                self,
+                heartbeat_timeout=heartbeat_timeout,
+            )
+            return result.reaped
+        except Exception:
+            # Never let reaping crash the caller (health endpoint, cron).
+            return []
 
     def health(self):
         stale = self.reap_stale()
@@ -287,7 +327,10 @@ class WorkerPoolsManager:
             "active_workers": self.active_worker_count(),
             "available_slots": self.available_slots(),
             "workers": self.workers(),
-            "reaped_stale": [{"id": w.get("id"), "item_id": w.get("item_id")} for w in stale],
+            "reaped_stale": [
+                {"id": w.get("worker_id"), "item_id": w.get("item_id")}
+                for w in stale
+            ],
         }
 
     @staticmethod
