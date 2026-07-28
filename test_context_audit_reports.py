@@ -116,7 +116,32 @@ def write_report_root(root: Path, *, observed_at="2026-07-27"):
     inventory = {
         "version": 1,
         "observed_at": observed_at,
-        "repositories": [],
+        "repositories": [
+            {
+                "name": "coral-way-capital/orchestrator",
+                "default_branch": "main",
+                "audit_ref": REPOSITORY_REVISION,
+                "owner": "coral-way-capital",
+                "lifecycle": "active",
+                "production_status": "production",
+                "stack": ["Python"],
+                "agent_instructions": ["AGENTS.md"],
+                "ci_workflows": [],
+                "verification_command": "python3 -m unittest",
+            },
+            {
+                "name": "coral-way-capital/cwc-control-plane",
+                "default_branch": "main",
+                "audit_ref": "c" * 40,
+                "owner": "coral-way-capital",
+                "lifecycle": "active",
+                "production_status": "non-production",
+                "stack": ["Python"],
+                "agent_instructions": ["AGENTS.md"],
+                "ci_workflows": [],
+                "verification_command": "python3 scripts/verify_control_plane.py",
+            },
+        ],
         "evidence_source": {
             "repository": "coral-way-capital/cwc-control-plane",
             "ref": INVENTORY_REVISION,
@@ -198,6 +223,74 @@ class ContextAuditReportTests(unittest.TestCase):
         payload = context_audit_reports.load_context_audit(self.root)
         self.assertFalse(payload["available"])
         self.assertEqual(payload["reason"], "no valid canonical reports")
+
+    def test_rejects_noncanonical_configured_root(self):
+        traversing_root = self.root / ".." / self.root.name
+        self.assertFalse(
+            context_audit_reports.load_context_audit(traversing_root)["available"]
+        )
+
+        with tempfile.TemporaryDirectory() as alias_tempdir:
+            alias = Path(alias_tempdir) / "alias"
+            alias.symlink_to(self.root.parent, target_is_directory=True)
+            ancestor_symlink_root = alias / self.root.name
+            self.assertFalse(
+                context_audit_reports.load_context_audit(ancestor_symlink_root)[
+                    "available"
+                ]
+            )
+
+    def test_rejects_report_revision_not_pinned_by_inventory(self):
+        unsafe = report("delta")
+        unsafe["repositories"][0]["audit_ref"] = "d" * 40
+        unsafe["repositories"][0]["evidence"][0]["url"] = (
+            "https://github.com/coral-way-capital/orchestrator/blob/"
+            f"{'d' * 40}/AGENTS.md#L3"
+        )
+        (self.root / "deltas" / "2026-07-27-weekly.json").write_text(
+            json.dumps(unsafe), encoding="utf-8"
+        )
+
+        payload = context_audit_reports.load_context_audit(self.root)
+        self.assertFalse(payload["available"])
+
+    def test_rejects_cross_repository_revision_allowlist_pair(self):
+        unsafe = report("delta")
+        unsafe["repositories"][0]["evidence"][0]["url"] = (
+            "https://github.com/coral-way-capital/cwc-control-plane/blob/"
+            f"{'c' * 40}/AGENTS.md#L3"
+        )
+        (self.root / "deltas" / "2026-07-27-weekly.json").write_text(
+            json.dumps(unsafe), encoding="utf-8"
+        )
+
+        payload = context_audit_reports.load_context_audit(self.root)
+        self.assertFalse(payload["available"])
+
+    def test_rejects_reports_missing_schema_required_fields(self):
+        for field in ("default_branch", "category", "message"):
+            with self.subTest(field=field):
+                unsafe = report("delta")
+                if field == "default_branch":
+                    del unsafe["repositories"][0][field]
+                else:
+                    del unsafe["repositories"][0]["evidence"][0][field]
+                (self.root / "deltas" / "2026-07-27-weekly.json").write_text(
+                    json.dumps(unsafe), encoding="utf-8"
+                )
+
+                payload = context_audit_reports.load_context_audit(self.root)
+                self.assertFalse(payload["available"])
+
+    def test_rejects_inconsistent_threshold_finding(self):
+        unsafe = report("delta")
+        unsafe["findings"][0]["score"] = 99
+        (self.root / "deltas" / "2026-07-27-weekly.json").write_text(
+            json.dumps(unsafe), encoding="utf-8"
+        )
+
+        payload = context_audit_reports.load_context_audit(self.root)
+        self.assertFalse(payload["available"])
 
     def test_rejects_noncanonical_and_traversal_references(self):
         unsafe = report("delta")

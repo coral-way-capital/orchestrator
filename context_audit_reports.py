@@ -120,11 +120,16 @@ def _integer(value: Any, field: str, minimum: int, maximum: int) -> int:
 def _normalize_evidence(
     item: Any,
     *,
-    allowed_repositories: set[str],
-    allowed_revisions: set[str],
+    allowed_sources: set[tuple[str, str]],
+    require_metadata: bool,
 ) -> dict[str, Any]:
     if not isinstance(item, dict):
         raise ContextAuditReportError("evidence must be an object")
+    if require_metadata and (
+        not isinstance(item.get("category"), str)
+        or not isinstance(item.get("message"), str)
+    ):
+        raise ContextAuditReportError("repository evidence metadata is invalid")
     path = _safe_relative_path(item.get("path"))
     line = _integer(item.get("line"), "evidence line", 1, 10_000_000)
     url = item.get("url")
@@ -133,10 +138,8 @@ def _normalize_evidence(
     match = EVIDENCE_URL_RE.fullmatch(url)
     if not match:
         raise ContextAuditReportError("evidence URL is not canonical")
-    if match["repository"] not in allowed_repositories:
-        raise ContextAuditReportError("evidence repository is not audited")
-    if match["revision"] not in allowed_revisions:
-        raise ContextAuditReportError("evidence revision is not audited")
+    if (match["repository"], match["revision"]) not in allowed_sources:
+        raise ContextAuditReportError("evidence source is not audited")
     if _safe_relative_path(match["path"]) != path or int(match["line"]) != line:
         raise ContextAuditReportError("evidence URL does not match its reference")
     return {
@@ -150,8 +153,8 @@ def _normalize_evidence(
 def _normalize_evidence_list(
     items: Any,
     *,
-    allowed_repositories: set[str],
-    allowed_revisions: set[str],
+    allowed_sources: set[tuple[str, str]],
+    require_metadata: bool = False,
 ) -> list[dict[str, Any]]:
     if not isinstance(items, list) or not items:
         raise ContextAuditReportError("evidence list is required")
@@ -160,8 +163,8 @@ def _normalize_evidence_list(
     for item in items:
         reference = _normalize_evidence(
             item,
-            allowed_repositories=allowed_repositories,
-            allowed_revisions=allowed_revisions,
+            allowed_sources=allowed_sources,
+            require_metadata=require_metadata,
         )
         key = (reference["path"], reference["line"], reference["url"])
         if key not in seen:
@@ -172,11 +175,78 @@ def _normalize_evidence_list(
 
 def _load_inventory(root: Path) -> dict[str, Any]:
     inventory = _read_json(_safe_file(root, "repositories.json"))
+    if set(inventory) != {
+        "version",
+        "observed_at",
+        "repositories",
+        "evidence_source",
+    }:
+        raise ContextAuditReportError("inventory fields are invalid")
     if inventory.get("version") != 1:
         raise ContextAuditReportError("unsupported inventory version")
     observed_at = _iso_date(inventory.get("observed_at"), "inventory observed_at")
+    raw_repositories = inventory.get("repositories")
+    if not isinstance(raw_repositories, list) or not raw_repositories:
+        raise ContextAuditReportError("inventory repositories are required")
+    repositories: dict[str, str] = {}
+    repository_fields = {
+        "name",
+        "default_branch",
+        "audit_ref",
+        "owner",
+        "lifecycle",
+        "production_status",
+        "stack",
+        "agent_instructions",
+        "ci_workflows",
+        "verification_command",
+    }
+    for item in raw_repositories:
+        if not isinstance(item, dict) or set(item) != repository_fields:
+            raise ContextAuditReportError("inventory repository is invalid")
+        name = item.get("name")
+        revision = item.get("audit_ref")
+        if (
+            not isinstance(name, str)
+            or not REPOSITORY_RE.fullmatch(name)
+            or name in repositories
+            or not isinstance(revision, str)
+            or not REVISION_RE.fullmatch(revision)
+        ):
+            raise ContextAuditReportError("inventory repository identity is invalid")
+        if (
+            not isinstance(item.get("default_branch"), str)
+            or not item["default_branch"]
+            or not isinstance(item.get("owner"), str)
+            or not item["owner"]
+            or item.get("lifecycle") not in {"active", "archived"}
+            or item.get("production_status")
+            not in {"production", "non-production", "unknown"}
+            or not isinstance(item.get("verification_command"), str)
+            or not item["verification_command"]
+        ):
+            raise ContextAuditReportError("inventory repository metadata is invalid")
+        for field, require_item in (
+            ("stack", True),
+            ("agent_instructions", False),
+            ("ci_workflows", False),
+        ):
+            values = item.get(field)
+            if (
+                not isinstance(values, list)
+                or (require_item and not values)
+                or any(not isinstance(value, str) or not value for value in values)
+                or len(values) != len(set(values))
+            ):
+                raise ContextAuditReportError(
+                    f"inventory repository {field} is invalid"
+                )
+        repositories[name] = revision
     source = inventory.get("evidence_source")
-    if not isinstance(source, dict):
+    if (
+        not isinstance(source, dict)
+        or set(source) != {"repository", "ref", "path"}
+    ):
         raise ContextAuditReportError("inventory evidence source is required")
     repository = source.get("repository")
     revision = source.get("ref")
@@ -191,6 +261,7 @@ def _load_inventory(root: Path) -> dict[str, Any]:
         "repository": repository,
         "revision": revision,
         "url": source_url,
+        "repositories": repositories,
     }
 
 
@@ -260,7 +331,6 @@ def _normalize_report(
         raise ContextAuditReportError("repository count is invalid")
 
     audited_repositories: set[str] = set()
-    audited_revisions: set[str] = {inventory["revision"]}
     for item in raw_repositories:
         if not isinstance(item, dict):
             raise ContextAuditReportError("repository record is invalid")
@@ -270,12 +340,18 @@ def _normalize_report(
             raise ContextAuditReportError("repository name is invalid")
         if name in audited_repositories:
             raise ContextAuditReportError("repository names must be unique")
+        if not isinstance(item.get("default_branch"), str):
+            raise ContextAuditReportError("repository default branch is invalid")
         if not isinstance(revision, str) or not REVISION_RE.fullmatch(revision):
             raise ContextAuditReportError("repository revision is invalid")
         audited_repositories.add(name)
-        audited_revisions.add(revision)
+        if inventory["repositories"].get(name) != revision:
+            raise ContextAuditReportError(
+                "repository revision is not pinned by inventory"
+            )
 
-    allowed_evidence_repositories = audited_repositories | {inventory["repository"]}
+    if audited_repositories != set(inventory["repositories"]):
+        raise ContextAuditReportError("report repositories do not match inventory")
     repositories: list[dict[str, Any]] = []
     for item in raw_repositories:
         score = _integer(item.get("score"), "repository score", 0, 100)
@@ -306,8 +382,11 @@ def _normalize_report(
                 "subscores": subscores,
                 "evidence": _normalize_evidence_list(
                     item.get("evidence"),
-                    allowed_repositories=allowed_evidence_repositories,
-                    allowed_revisions=audited_revisions,
+                    allowed_sources={
+                        (item["name"], item["audit_ref"]),
+                        (inventory["repository"], inventory["revision"]),
+                    },
+                    require_metadata=True,
                 ),
             }
         )
@@ -315,36 +394,83 @@ def _normalize_report(
     raw_findings = report.get("findings")
     if not isinstance(raw_findings, list):
         raise ContextAuditReportError("findings must be a list")
+    repositories_by_name = {item["name"]: item for item in repositories}
     findings: list[dict[str, Any]] = []
+    finding_keys: set[tuple[str, str]] = set()
     for item in raw_findings:
-        if not isinstance(item, dict) or item.get("reason") not in {
-            "score_below_60",
-            "score_drop",
-        }:
+        if (
+            not isinstance(item, dict)
+            or not {
+                "id",
+                "repository",
+                "reason",
+                "score",
+                "baseline_score",
+                "evidence",
+            }.issubset(item)
+            or item.get("reason") not in {"score_below_60", "score_drop"}
+        ):
             raise ContextAuditReportError("finding is invalid")
         repository = item.get("repository")
         if repository not in audited_repositories:
             raise ContextAuditReportError("finding repository is invalid")
+        repository_revision = inventory["repositories"][repository]
+        repository_record = repositories_by_name[repository]
         finding_id = item.get("id")
         if not isinstance(finding_id, str) or not finding_id or len(finding_id) > 200:
             raise ContextAuditReportError("finding id is invalid")
+        score = _integer(item.get("score"), "finding score", 0, 100)
+        baseline_score = (
+            None
+            if item.get("baseline_score") is None
+            else _integer(item["baseline_score"], "finding baseline score", 0, 100)
+        )
+        finding_key = (repository, item["reason"])
+        if finding_key in finding_keys:
+            raise ContextAuditReportError("threshold finding is duplicated")
+        if (
+            score != repository_record["score"]
+            or baseline_score != repository_record["baseline_score"]
+            or (
+                item["reason"] == "score_below_60"
+                and repository_record["score"] >= 60
+            )
+            or (
+                item["reason"] == "score_drop"
+                and (
+                    repository_record["change"] is None
+                    or repository_record["change"] >= -10
+                )
+            )
+        ):
+            raise ContextAuditReportError("threshold finding is inconsistent")
+        finding_keys.add(finding_key)
         findings.append(
             {
                 "repository": repository,
                 "reason": item["reason"],
-                "score": _integer(item.get("score"), "finding score", 0, 100),
-                "baseline_score": (
-                    None
-                    if item.get("baseline_score") is None
-                    else _integer(item["baseline_score"], "finding baseline score", 0, 100)
-                ),
+                "score": score,
+                "baseline_score": baseline_score,
                 "evidence": _normalize_evidence_list(
                     item.get("evidence"),
-                    allowed_repositories=allowed_evidence_repositories,
-                    allowed_revisions=audited_revisions,
+                    allowed_sources={
+                        (repository, repository_revision),
+                        (inventory["repository"], inventory["revision"]),
+                    },
                 ),
             }
         )
+    expected_finding_keys = {
+        (item["name"], "score_below_60")
+        for item in repositories
+        if item["score"] < 60
+    } | {
+        (item["name"], "score_drop")
+        for item in repositories
+        if item["change"] is not None and item["change"] < -10
+    }
+    if finding_keys != expected_finding_keys:
+        raise ContextAuditReportError("threshold findings are incomplete")
 
     repositories.sort(key=lambda item: (item["score"], item["name"]))
     passing = sum(item["score"] >= 60 for item in repositories)
@@ -392,16 +518,16 @@ def load_context_audit(
     stale_after_days: int | None = None,
 ) -> dict[str, Any]:
     """Load the newest canonical report and return only dashboard-safe fields."""
-    root_path = Path(report_root) if report_root is not None else DEFAULT_REPORT_ROOT
-    if (
-        not root_path.is_absolute()
-        or not root_path.exists()
-        or not root_path.is_dir()
-        or root_path.is_symlink()
-    ):
+    try:
+        root_path = Path(report_root) if report_root is not None else DEFAULT_REPORT_ROOT
+        if not root_path.is_absolute():
+            return _unavailable("report root unavailable")
+        root = root_path.resolve(strict=True)
+        if root != root_path or not root.is_dir():
+            return _unavailable("report root unavailable")
+    except (OSError, RuntimeError, TypeError, ValueError):
         return _unavailable("report root unavailable")
     try:
-        root = root_path.resolve(strict=True)
         inventory = _load_inventory(root)
         candidates = _canonical_candidates(root)
         if not candidates:
