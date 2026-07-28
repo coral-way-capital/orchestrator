@@ -24,6 +24,17 @@ def test_parse_non_contract_final_response_for_repair():
     assert parsed["error_summary"] == "Worker finished without contract output: Ad-hoc verification passed — not suite green."
 
 
+def test_pr_mention_inside_ambiguous_text_is_not_success():
+    line = (
+        "2026-07-08 INFO gateway.platforms.webhook: [webhook] Response for "
+        "webhook:cwc-issue-dispatch:ambiguous: I found PR #42, but checks "
+        "are failing and the work is incomplete."
+    )
+    parsed = gateway_reconciler.parse_gateway_response_line(line)
+    assert parsed["status"] == "non_contract"
+    assert parsed.get("pr_number") is None
+
+
 def test_scan_gateway_log_keeps_latest_final_response_per_dispatch():
     with tempfile.TemporaryDirectory() as td:
         log = Path(td) / "gateway.log"
@@ -100,6 +111,7 @@ def test_non_contract_linked_pr_trace_is_finalized_after_repair():
 if __name__ == "__main__":
     test_parse_pr_and_failed_gateway_responses()
     test_parse_non_contract_final_response_for_repair()
+    test_pr_mention_inside_ambiguous_text_is_not_success()
     test_scan_gateway_log_keeps_latest_final_response_per_dispatch()
     test_non_contract_linked_pr_trace_is_finalized_after_repair()
     print("ok")
