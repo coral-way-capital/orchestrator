@@ -1,0 +1,106 @@
+{
+  "week_start": "2026-07-02T00:00:00Z",
+  "evaluated_at": "2026-07-27T12:00:00Z",
+  "pull_requests": [
+    {
+      "repo": "coral-way-capital/orchestrator",
+      "pr_number": 17,
+      "state": "merged",
+      "opened_at": "2026-07-01T10:00:00Z",
+      "merged_at": "2026-07-03T15:30:00Z",
+      "closed_at": "2026-07-03T15:30:00Z",
+      "item_id": "coral-way-capital/cwc-control-plane#17",
+      "prompt_id": "fix-bug",
+      "model_provider": "openai-codex",
+      "model": "gpt-5.5",
+      "task_class": "bug",
+      "reviews": [
+        {
+          "id": 171,
+          "state": "CHANGES_REQUESTED",
+          "submitted_at": "2026-07-01T12:00:00Z",
+          "body": "[severity:high] Authentication fallback is unsafe.",
+          "html_url": "https://github.com/coral-way-capital/orchestrator/pull/17#pullrequestreview-171",
+          "commit_id": "1111111111111111111111111111111111111111"
+        },
+        {
+          "id": 172,
+          "state": "APPROVED",
+          "submitted_at": "2026-07-02T09:15:00Z",
+          "body": "Resolved.",
+          "html_url": "https://github.com/coral-way-capital/orchestrator/pull/17#pullrequestreview-172",
+          "commit_id": "2222222222222222222222222222222222222222"
+        }
+      ],
+      "commits": [
+        {
+          "sha": "1111111111111111111111111111111111111111",
+          "committed_at": "2026-07-01T11:00:00Z",
+          "html_url": "https://github.com/coral-way-capital/orchestrator/commit/1111111111111111111111111111111111111111"
+        },
+        {
+          "sha": "2222222222222222222222222222222222222222",
+          "committed_at": "2026-07-02T08:00:00Z",
+          "html_url": "https://github.com/coral-way-capital/orchestrator/commit/2222222222222222222222222222222222222222"
+        }
+      ],
+      "reopenings": [],
+      "follow_ups": [],
+      "human_override": null
+    },
+    {
+      "repo": "coral-way-capital/orchestrator",
+      "pr_number": 18,
+      "state": "closed_unmerged",
+      "opened_at": "2026-07-05T09:00:00Z",
+      "merged_at": null,
+      "closed_at": "2026-07-06T12:00:00Z",
+      "item_id": "coral-way-capital/cwc-control-plane#18",
+      "prompt_id": "fix-bug",
+      "model_provider": "openai-codex",
+      "model": "gpt-5.5",
+      "task_class": "bug",
+      "reviews": [],
+      "commits": [],
+      "reopenings": [
+        {
+          "html_url": "https://github.com/coral-way-capital/cwc-control-plane/issues/18#event-1801"
+        }
+      ],
+      "follow_ups": [
+        {
+          "html_url": "https://github.com/coral-way-capital/cwc-control-plane/issues/28"
+        }
+      ],
+      "human_override": {
+        "decision": "wrong_direction",
+        "actor": "ivan",
+        "reason": "Closed because the implementation targeted the wrong workflow.",
+        "html_url": "https://github.com/coral-way-capital/orchestrator/pull/18#issuecomment-1802"
+      }
+    },
+    {
+      "repo": "coral-way-capital/orchestrator",
+      "pr_number": 19,
+      "state": "merged",
+      "opened_at": "2026-07-07T09:00:00Z",
+      "merged_at": "2026-07-08T09:00:00Z",
+      "closed_at": "2026-07-08T09:00:00Z",
+      "item_id": "coral-way-capital/cwc-control-plane#19",
+      "prompt_id": "fix-bug",
+      "model_provider": "openai-codex",
+      "model": "gpt-5.5",
+      "task_class": "bug",
+      "reviews": [],
+      "commits": [],
+      "reopenings": [],
+      "follow_ups": [],
+      "human_override": {
+        "decision": "wrong_direction",
+        "actor": "ivan",
+        "reason": "Merged implementation did not satisfy the requested control-plane boundary.",
+        "html_url": "https://github.com/coral-way-capital/orchestrator/pull/19#issuecomment-1901"
+      }
+    }
+  ]
+}

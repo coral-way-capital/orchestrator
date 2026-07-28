@@ -50,6 +50,10 @@ REPO_PATTERN = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})/"
     r"[A-Za-z0-9_.-]{1,100}$"
 )
+REVIEW_SEVERITY_PATTERN = re.compile(
+    r"\[(?:severity|sev)\s*:\s*(critical|high|medium|low)\]", re.IGNORECASE
+)
+COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{7,64}$")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pull_requests (
@@ -136,6 +140,34 @@ def _validate_pr_number(number: Any) -> int:
     ):
         raise PROutcomeError("pull_request.number must be a positive 64-bit integer")
     return number
+
+
+def _review_provenance(review: dict[str, Any]) -> dict[str, Any]:
+    """Persist bounded classification/provenance, never the untrusted review body."""
+    body = review.get("body")
+    severity = None
+    if isinstance(body, str):
+        match = REVIEW_SEVERITY_PATTERN.search(body[:100_000])
+        severity = match.group(1).lower() if match else None
+    html_url = review.get("html_url")
+    if not (
+        isinstance(html_url, str)
+        and len(html_url) <= 2048
+        and html_url.startswith("https://github.com/")
+    ):
+        html_url = None
+    commit_id = review.get("commit_id")
+    if not (
+        isinstance(commit_id, str) and COMMIT_SHA_PATTERN.fullmatch(commit_id)
+    ):
+        commit_id = None
+    return {
+        "review_id": review.get("id"),
+        "state": review.get("state"),
+        "severity_tag": severity,
+        "html_url": html_url,
+        "commit_id": commit_id,
+    }
 
 
 @contextmanager
@@ -502,7 +534,16 @@ def ingest_pull_snapshot(
             event_key=f"pull:{github_id}:reopened:{reopened_at}",
             actor=None,
             source=source,
-            payload={"reopened_at": reopened_at},
+            payload={
+                "reopened_at": reopened_at,
+                "html_url": (
+                    pull.get("html_url")
+                    if isinstance(pull.get("html_url"), str)
+                    and len(pull["html_url"]) <= 2048
+                    and pull["html_url"].startswith("https://github.com/")
+                    else None
+                ),
+            },
         ):
             inserted.append(("opened", reopened_at))
 
@@ -537,7 +578,7 @@ def ingest_pull_snapshot(
                 event_key=f"review:{review_id}:{event_type}",
                 actor=actor,
                 source=source,
-                payload={"review_id": review_id, "state": review.get("state")},
+                payload=_review_provenance(review),
             ):
                 inserted.append((event_type, submitted_at))
 
@@ -698,6 +739,38 @@ def get_pull_request(
         result["opened_at"], result["merged_at"]
     )
     return result
+
+
+def list_pull_events(
+    repo: str,
+    pr_number: int,
+    *,
+    db_path: Path | str = OUTCOMES_DB,
+) -> list[dict[str, Any]]:
+    """Return stable, provenance-preserving events for one tracked PR."""
+    repo = _validate_repo(repo)
+    pr_number = _validate_pr_number(pr_number)
+    with get_db(db_path) as db:
+        rows = db.execute(
+            """
+            SELECT event_type, event_at, event_key, github_actor, source,
+                   payload_json
+            FROM pr_outcome_events
+            WHERE repo = ? AND pr_number = ?
+            ORDER BY event_at, id
+            """,
+            (repo, pr_number),
+        ).fetchall()
+    events = []
+    for row in rows:
+        event = dict(row)
+        try:
+            event["payload"] = json.loads(event.pop("payload_json") or "{}")
+        except json.JSONDecodeError:
+            event["payload"] = {}
+            event["payload_availability"] = "not_available"
+        events.append(event)
+    return events
 
 
 def build_report(*, db_path: Path | str = OUTCOMES_DB) -> dict[str, Any]:
