@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import subprocess
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -38,7 +40,16 @@ CURRENT_STATES = {
     "closed_unmerged",
 }
 TERMINAL_STATES = {"merged", "closed_unmerged"}
-REVIEW_STATES = {"APPROVED": "approved", "CHANGES_REQUESTED": "changes_requested"}
+REVIEW_STATES = {
+    "APPROVED": "approved",
+    "CHANGES_REQUESTED": "changes_requested",
+    "DISMISSED": "review_dismissed",
+}
+OUTCOME_EVENT_TYPES = CURRENT_STATES | {"review_dismissed"}
+REPO_PATTERN = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})/"
+    r"[A-Za-z0-9_.-]{1,100}$"
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pull_requests (
@@ -110,15 +121,44 @@ def _exact_timestamp(value: Any, field: str, *, required: bool = True) -> str | 
     return text
 
 
+def _validate_repo(repo: Any) -> str:
+    if not isinstance(repo, str) or not REPO_PATTERN.fullmatch(repo):
+        raise PROutcomeError("repository.full_name must be a valid owner/repository")
+    return repo
+
+
+def _validate_pr_number(number: Any) -> int:
+    if (
+        isinstance(number, bool)
+        or not isinstance(number, int)
+        or number <= 0
+        or number > 9_223_372_036_854_775_807
+    ):
+        raise PROutcomeError("pull_request.number must be a positive 64-bit integer")
+    return number
+
+
 @contextmanager
 def get_db(db_path: Path | str = OUTCOMES_DB):
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(str(path), timeout=10)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA journal_mode=WAL")
-    db.execute("PRAGMA busy_timeout=5000")
-    db.executescript(SCHEMA)
+    db = None
+    for attempt in range(6):
+        try:
+            db = sqlite3.connect(str(path), timeout=30)
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=30000")
+            db.execute("PRAGMA journal_mode=WAL")
+            db.executescript(SCHEMA)
+            break
+        except sqlite3.OperationalError as exc:
+            if db is not None:
+                db.close()
+                db = None
+            if "locked" not in str(exc).lower() or attempt == 5:
+                raise
+            time.sleep(0.05 * (2 ** attempt))
+    assert db is not None
     try:
         yield db
         db.commit()
@@ -237,7 +277,7 @@ def _insert_event(
     source: str,
     payload: dict[str, Any],
 ) -> int:
-    if event_type not in CURRENT_STATES:
+    if event_type not in OUTCOME_EVENT_TYPES:
         raise PROutcomeError(f"unsupported PR event type: {event_type}")
     cursor = db.execute(
         """
@@ -263,16 +303,71 @@ def _insert_event(
 def _derived_state(db: sqlite3.Connection, repo: str, pr_number: int) -> str:
     rows = db.execute(
         """
-        SELECT event_type FROM pr_outcome_events
+        SELECT event_type, event_at, event_key, github_actor
+        FROM pr_outcome_events
         WHERE repo = ? AND pr_number = ?
-        ORDER BY event_at DESC, id DESC
         """,
         (repo, pr_number),
     ).fetchall()
-    types = [row["event_type"] for row in rows]
-    if "merged" in types:
+    if any(row["event_type"] == "merged" for row in rows):
         return "merged"
-    return types[0] if types else "opened"
+
+    dismissed_reviews = {
+        row["event_key"].split(":", 2)[1]
+        for row in rows
+        if row["event_type"] == "review_dismissed"
+    }
+    active = [
+        row
+        for row in rows
+        if row["event_type"] != "review_dismissed"
+        and not (
+            row["event_type"] in {"approved", "changes_requested"}
+            and row["event_key"].split(":", 2)[1] in dismissed_reviews
+        )
+    ]
+
+    def event_order(row: sqlite3.Row) -> tuple[datetime, int, str]:
+        occurred_at = datetime.fromisoformat(row["event_at"].replace("Z", "+00:00"))
+        tie_priority = {
+            "opened": 1,
+            "approved": 2,
+            "changes_requested": 3,
+            "closed_unmerged": 4,
+            "merged": 5,
+        }[row["event_type"]]
+        return occurred_at, tie_priority, row["event_key"]
+
+    lifecycle = [
+        row for row in active if row["event_type"] in {"opened", "closed_unmerged"}
+    ]
+    latest_lifecycle = max(lifecycle, key=event_order) if lifecycle else None
+    if latest_lifecycle and latest_lifecycle["event_type"] == "closed_unmerged":
+        return "closed_unmerged"
+
+    reviews = [
+        row
+        for row in active
+        if row["event_type"] in {"approved", "changes_requested"}
+        and (
+            latest_lifecycle is None
+            or event_order(row) > event_order(latest_lifecycle)
+        )
+    ]
+    latest_by_reviewer: dict[str, sqlite3.Row] = {}
+    for review in reviews:
+        reviewer = review["github_actor"] or review["event_key"]
+        previous = latest_by_reviewer.get(reviewer)
+        if previous is None or event_order(review) > event_order(previous):
+            latest_by_reviewer[reviewer] = review
+    reviewer_states = {
+        review["event_type"] for review in latest_by_reviewer.values()
+    }
+    if "changes_requested" in reviewer_states:
+        return "changes_requested"
+    if "approved" in reviewer_states:
+        return "approved"
+    return "opened"
 
 
 def _upsert_pull(
@@ -283,11 +378,41 @@ def _upsert_pull(
     source: str,
     context: dict[str, Any],
 ) -> None:
-    number = pull.get("number")
-    if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
-        raise PROutcomeError("pull_request.number must be a positive integer")
+    number = _validate_pr_number(pull.get("number"))
     opened_at = _exact_timestamp(pull.get("created_at"), "pull_request.created_at")
     state = _derived_state(db, repo, number)
+    existing = db.execute(
+        """
+        SELECT updated_at, merged_at, closed_at
+        FROM pull_requests WHERE repo = ? AND pr_number = ?
+        """,
+        (repo, number),
+    ).fetchone()
+    updated_at = _exact_timestamp(
+        pull.get("updated_at"), "pull_request.updated_at", required=False
+    )
+    merged_at = _exact_timestamp(
+        pull.get("merged_at"), "pull_request.merged_at", required=False
+    )
+    closed_at = _exact_timestamp(
+        pull.get("closed_at"), "pull_request.closed_at", required=False
+    )
+    if existing:
+        existing_updated_at = existing["updated_at"]
+        incoming_is_newer = (
+            updated_at is not None
+            and (
+                existing_updated_at is None
+                or datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                > datetime.fromisoformat(
+                    existing_updated_at.replace("Z", "+00:00")
+                )
+            )
+        )
+        if not incoming_is_newer:
+            updated_at = existing_updated_at
+            merged_at = existing["merged_at"]
+            closed_at = existing["closed_at"]
     db.execute(
         """
         INSERT INTO pull_requests
@@ -300,9 +425,9 @@ def _upsert_pull(
           html_url=COALESCE(excluded.html_url, pull_requests.html_url),
           state=excluded.state,
           opened_at=excluded.opened_at,
-          updated_at=COALESCE(excluded.updated_at, pull_requests.updated_at),
-          merged_at=COALESCE(excluded.merged_at, pull_requests.merged_at),
-          closed_at=COALESCE(excluded.closed_at, pull_requests.closed_at),
+          updated_at=excluded.updated_at,
+          merged_at=excluded.merged_at,
+          closed_at=excluded.closed_at,
           item_id=COALESCE(excluded.item_id, pull_requests.item_id),
           dispatch_id=COALESCE(excluded.dispatch_id, pull_requests.dispatch_id),
           project_id=COALESCE(excluded.project_id, pull_requests.project_id),
@@ -322,9 +447,9 @@ def _upsert_pull(
             pull.get("html_url"),
             state,
             opened_at,
-            _exact_timestamp(pull.get("updated_at"), "pull_request.updated_at", required=False),
-            _exact_timestamp(pull.get("merged_at"), "pull_request.merged_at", required=False),
-            _exact_timestamp(pull.get("closed_at"), "pull_request.closed_at", required=False),
+            updated_at,
+            merged_at,
+            closed_at,
             context.get("item_id"),
             context.get("dispatch_id"),
             context.get("project_id"),
@@ -346,11 +471,8 @@ def ingest_pull_snapshot(
     event_logger: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Ingest one exact GitHub pull snapshot and its reviews."""
-    if not repo or "/" not in repo:
-        raise PROutcomeError("repository.full_name is required")
-    number = pull.get("number")
-    if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
-        raise PROutcomeError("pull_request.number must be a positive integer")
+    repo = _validate_repo(repo)
+    number = _validate_pr_number(pull.get("number"))
     github_id = pull.get("id") or f"{repo}#{number}"
     opened_at = _exact_timestamp(pull.get("created_at"), "pull_request.created_at")
     inserted: list[tuple[str, str]] = []
@@ -399,6 +521,12 @@ def ingest_pull_snapshot(
                 review.get("submitted_at"), "review.submitted_at"
             )
             review_id = review.get("id")
+            if (
+                isinstance(review_id, bool)
+                or not isinstance(review_id, int)
+                or review_id <= 0
+            ):
+                raise PROutcomeError("review.id must be a positive integer")
             actor = (review.get("user") or {}).get("login")
             if _insert_event(
                 db,
@@ -441,7 +569,7 @@ def ingest_pull_snapshot(
                 pr_number=number,
                 event_type="closed_unmerged",
                 event_at=closed_at,
-                event_key=f"pull:{github_id}:closed_unmerged",
+                event_key=f"pull:{github_id}:closed_unmerged:{closed_at}",
                 actor=None,
                 source=source,
                 payload={"closed_at": closed_at},
@@ -498,7 +626,7 @@ def ingest_webhook(
             source="github_webhook",
             event_logger=event_logger,
         )
-    if event == "pull_request_review" and action == "submitted":
+    if event == "pull_request_review" and action in {"submitted", "dismissed"}:
         return ingest_pull_snapshot(
             repo,
             pull,
@@ -525,6 +653,8 @@ def get_pull_request(
     *,
     db_path: Path | str = OUTCOMES_DB,
 ) -> dict[str, Any] | None:
+    repo = _validate_repo(repo)
+    pr_number = _validate_pr_number(pr_number)
     with get_db(db_path) as db:
         row = db.execute(
             "SELECT * FROM pull_requests WHERE repo = ? AND pr_number = ?",
@@ -535,17 +665,32 @@ def get_pull_request(
         result = dict(row)
         reviews = db.execute(
             """
-            SELECT event_type, event_at FROM pr_outcome_events
+            SELECT event_type, event_at, event_key FROM pr_outcome_events
             WHERE repo = ? AND pr_number = ?
-              AND event_type IN ('approved', 'changes_requested')
+              AND event_type IN (
+                  'approved', 'changes_requested', 'review_dismissed'
+              )
             ORDER BY event_at, id
             """,
             (repo, pr_number),
         ).fetchall()
+    dismissed_reviews = {
+        review["event_key"].split(":", 2)[1]
+        for review in reviews
+        if review["event_type"] == "review_dismissed"
+    }
+    active_reviews = [
+        review
+        for review in reviews
+        if review["event_type"] != "review_dismissed"
+        and review["event_key"].split(":", 2)[1] not in dismissed_reviews
+    ]
     result["review_cycles"] = sum(
-        review["event_type"] == "changes_requested" for review in reviews
+        review["event_type"] == "changes_requested" for review in active_reviews
     )
-    result["first_review_at"] = reviews[0]["event_at"] if reviews else None
+    result["first_review_at"] = (
+        active_reviews[0]["event_at"] if active_reviews else None
+    )
     result["review_delay_seconds"] = _duration_seconds(
         result["opened_at"], result["first_review_at"]
     )
@@ -625,12 +770,22 @@ class GitHubCLI:
     """Small injectable GitHub client used only by the explicit backfill CLI."""
 
     def _api(self, endpoint: str) -> list[dict[str, Any]]:
-        completed = subprocess.run(
-            ["gh", "api", "--paginate", "--slurp", endpoint],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        completed = None
+        for attempt in range(3):
+            try:
+                completed = subprocess.run(
+                    ["gh", "api", "--method", "GET", "--paginate", "--slurp", endpoint],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                break
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                if attempt == 2:
+                    raise
+                time.sleep(2 ** attempt)
+        assert completed is not None
         documents = json.loads(completed.stdout)
         rows: list[dict[str, Any]] = []
         for document in documents:
@@ -638,6 +793,7 @@ class GitHubCLI:
         return rows
 
     def list_pulls(self, repo: str, since: str) -> list[dict[str, Any]]:
+        repo = _validate_repo(repo)
         pulls = self._api(
             f"/repos/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=100"
         )
@@ -650,6 +806,8 @@ class GitHubCLI:
         ]
 
     def list_reviews(self, repo: str, number: int) -> list[dict[str, Any]]:
+        repo = _validate_repo(repo)
+        _validate_pr_number(number)
         return self._api(f"/repos/{repo}/pulls/{number}/reviews?per_page=100")
 
 
@@ -665,11 +823,26 @@ def backfill_30_days(
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None or now.utcoffset() is None:
         raise PROutcomeError("backfill clock must be timezone-aware")
-    since = (now - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+    requested_since = (now - timedelta(days=30)).isoformat().replace("+00:00", "Z")
     processed = 0
     inserted_events = 0
+    repo_windows: dict[str, str] = {}
     for repo in repos:
+        repo = _validate_repo(repo)
         with get_db(db_path) as db:
+            previous = db.execute(
+                """
+                SELECT window_started_at, status
+                FROM pr_backfill_runs WHERE repo = ?
+                """,
+                (repo,),
+            ).fetchone()
+            since = (
+                previous["window_started_at"]
+                if previous and previous["status"] in {"running", "failed"}
+                else requested_since
+            )
+            repo_windows[repo] = since
             db.execute(
                 """
                 INSERT INTO pr_backfill_runs
@@ -677,31 +850,49 @@ def backfill_30_days(
                 VALUES (?, ?, 'running', ?)
                 ON CONFLICT(repo) DO UPDATE SET
                   window_started_at=excluded.window_started_at,
+                  last_pr_number=CASE
+                    WHEN pr_backfill_runs.status IN ('running', 'failed')
+                    THEN pr_backfill_runs.last_pr_number
+                    ELSE NULL
+                  END,
                   status='running',
                   updated_at=excluded.updated_at
                 """,
                 (repo, since, _now_iso()),
             )
-        for pull in github.list_pulls(repo, since):
-            outcome = ingest_pull_snapshot(
-                repo,
-                pull,
-                github.list_reviews(repo, pull["number"]),
-                db_path=db_path,
-                context_resolver=context_resolver,
-                source="github_backfill",
-            )
-            processed += 1
-            inserted_events += outcome["inserted_events"]
+        try:
+            pulls = github.list_pulls(repo, since)
+            for pull in pulls:
+                outcome = ingest_pull_snapshot(
+                    repo,
+                    pull,
+                    github.list_reviews(repo, pull["number"]),
+                    db_path=db_path,
+                    context_resolver=context_resolver,
+                    source="github_backfill",
+                )
+                processed += 1
+                inserted_events += outcome["inserted_events"]
+                with get_db(db_path) as db:
+                    db.execute(
+                        """
+                        UPDATE pr_backfill_runs
+                        SET last_pr_number = ?, updated_at = ?
+                        WHERE repo = ?
+                        """,
+                        (pull["number"], _now_iso(), repo),
+                    )
+        except Exception:
             with get_db(db_path) as db:
                 db.execute(
                     """
                     UPDATE pr_backfill_runs
-                    SET last_pr_number = ?, updated_at = ?
+                    SET status = 'failed', updated_at = ?
                     WHERE repo = ?
                     """,
-                    (pull["number"], _now_iso(), repo),
+                    (_now_iso(), repo),
                 )
+            raise
         with get_db(db_path) as db:
             db.execute(
                 """
@@ -711,8 +902,12 @@ def backfill_30_days(
                 """,
                 (_now_iso(), _now_iso(), repo),
             )
+    unique_windows = set(repo_windows.values())
     return {
-        "window_started_at": since,
+        "window_started_at": (
+            next(iter(unique_windows)) if len(unique_windows) == 1 else requested_since
+        ),
+        "repo_windows": repo_windows,
         "processed": processed,
         "inserted_events": inserted_events,
         "report": build_report(db_path=db_path),

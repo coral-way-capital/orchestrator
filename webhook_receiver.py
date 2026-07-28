@@ -94,6 +94,7 @@ DEFAULT_DISPATCH_PROVIDER = os.environ.get("CWC_DISPATCH_PROVIDER", "openai-code
 DEFAULT_DISPATCH_MODEL = os.environ.get("CWC_DISPATCH_MODEL", "gpt-5.5")
 BLOCKED_DISPATCH_MODELS = {"glm-5-turbo"}
 MAX_WORKER_RESULT_BODY = 262_144
+MAX_GITHUB_WEBHOOK_BODY = 2_097_152
 
 
 def trigger_dispatcher_async(reason="enqueue"):
@@ -147,8 +148,8 @@ def verify_signature(payload_body, signature_header):
     """Verify GitHub webhook HMAC-SHA256 signature."""
     secret = load_secret()
     if not secret:
-        print("WARNING: No webhook secret configured, skipping verification")
-        return True
+        print("WARNING: No webhook secret configured; rejecting webhook")
+        return False
     if not signature_header:
         return False
     expected = "sha256=" + hmac.new(
@@ -363,6 +364,9 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             if content_type != "application/json":
                 self._json_response({"error": "Content-Type must be application/json"}, 415)
                 return
+        if path == "/" and content_length > MAX_GITHUB_WEBHOOK_BODY:
+            self._json_response({"error": "GitHub webhook body too large"}, 413)
+            return
         raw_body = self.rfile.read(content_length)
 
         # API dispatch route
@@ -892,7 +896,11 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     {"error": "repo and integer number are required"}, 400
                 )
                 return
-            outcome = get_pr_outcome(repo or "", pr_number)
+            try:
+                outcome = get_pr_outcome(repo or "", pr_number)
+            except PROutcomeError as exc:
+                self._json_response({"error": str(exc)}, 400)
+                return
             if outcome is None:
                 self._json_response({"error": "PR outcome not found"}, 404)
                 return
