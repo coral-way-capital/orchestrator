@@ -6,6 +6,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import dispatch_telemetry
 import worker_evaluations
 import pr_outcomes
 
@@ -102,6 +103,7 @@ def test_refresh_is_idempotent_and_order_is_stable():
 def test_pr_outcome_adapter_evaluates_every_terminal_row_without_inference():
     with tempfile.TemporaryDirectory() as td:
         pr_db = Path(td) / "pr-outcomes.db"
+        telemetry_db = Path(td) / "telemetry.db"
         evaluation_db = Path(td) / "evaluations.db"
         queue_file = Path(td) / "queue.json"
         queue_file.write_text(
@@ -115,8 +117,8 @@ def test_pr_outcome_adapter_evaluates_every_terminal_row_without_inference():
                             "id": "coral-way-capital/cwc-control-plane#17",
                             "dispatch_id": "webhook:cwc-issue-dispatch:evaluation-17",
                             "agent_prompt": "fix-bug",
-                            "model_provider": "openai-codex",
-                            "model": "gpt-5.5",
+                            "model_provider": "requested-provider",
+                            "model": "requested-model",
                             "task_class": "bug",
                         }
                     ],
@@ -160,6 +162,52 @@ def test_pr_outcome_adapter_evaluates_every_terminal_row_without_inference():
                     "linkage_state": "linked" if number == 17 else "not_available",
                 },
             )
+        dispatch_telemetry.record_dispatch_start(
+            dispatch_id="webhook:cwc-issue-dispatch:evaluation-17",
+            item_id="coral-way-capital/cwc-control-plane#17",
+            repo="coral-way-capital/orchestrator",
+            task_class="bug",
+            model_provider="requested-provider",
+            model="requested-model",
+            started_at="2026-07-01T10:00:00Z",
+            db_path=telemetry_db,
+        )
+        dispatch_telemetry.record_terminal_result(
+            {
+                "dispatch_id": "webhook:cwc-issue-dispatch:evaluation-17",
+                "item_id": "coral-way-capital/cwc-control-plane#17",
+                "repo": "coral-way-capital/orchestrator",
+                "status": "completed",
+                "occurred_at": "2026-07-03T15:30:00Z",
+                "pr_number": 17,
+                "telemetry": {
+                    "usage": {
+                        "status": "available",
+                        "input_tokens": 1200,
+                        "output_tokens": 345,
+                        "source": {
+                            "kind": "provider_response",
+                            "provider": "openai-codex",
+                            "model": "gpt-5.5",
+                            "response_id": "resp-evaluation-17",
+                            "usage_path": "response.usage",
+                        },
+                    },
+                    "cost": {
+                        "status": "not_available",
+                        "source": {
+                            "kind": "provider_unsupported",
+                            "provider": "openai-codex",
+                        },
+                    },
+                    "accepted_outcome": {
+                        "status": "not_available",
+                        "source": {"kind": "not_reported"},
+                    },
+                },
+            },
+            db_path=telemetry_db,
+        )
         review_events = pr_outcomes.list_pull_events(
             FIXTURE["pull_requests"][0]["repo"], 17, db_path=pr_db
         )
@@ -229,11 +277,15 @@ def test_pr_outcome_adapter_evaluates_every_terminal_row_without_inference():
             pr_db_path=pr_db,
             db_path=evaluation_db,
             queue_file=queue_file,
+            telemetry_db_path=telemetry_db,
             evaluated_at=FIXTURE["evaluated_at"],
         )
         assert report["coverage"]["percent"] == 100.0
         assert report["coverage"]["terminal_tracked"] == 3
         assert report["evaluations"][0]["prompt_id"] == "fix-bug"
+        assert report["evaluations"][0]["model_provider"] == "openai-codex"
+        assert report["evaluations"][0]["model"] == "gpt-5.5"
+        assert report["evaluations"][0]["task_class"] == "bug"
         provenance = report["evaluations"][0]["provenance"]
         assert provenance["queue_item"]["value"] == (
             "coral-way-capital/cwc-control-plane#17"
@@ -269,6 +321,18 @@ def test_pr_outcome_adapter_evaluates_every_terminal_row_without_inference():
             "availability": "not_available",
             "reason": "PR engineering state is not accepted business outcome evidence",
         }
+        telemetry_unavailable = worker_evaluations.refresh_from_pr_outcomes(
+            pr_db_path=pr_db,
+            db_path=Path(td) / "evaluations-without-telemetry.db",
+            queue_file=queue_file,
+            telemetry_db_path=Path(td) / "missing" / "telemetry.db",
+            evaluated_at=FIXTURE["evaluated_at"],
+        )
+        assert telemetry_unavailable["coverage"]["percent"] == 100.0
+        assert telemetry_unavailable["evaluations"][0]["model_provider"] == (
+            "requested-provider"
+        )
+        assert telemetry_unavailable["evaluations"][0]["model"] == "requested-model"
         dismissed = report["evaluations"][2]
         assert dismissed["pr_number"] == 20
         assert dismissed["review_severity"]["availability"] == "not_available"

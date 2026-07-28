@@ -15,6 +15,13 @@ retain exact GitHub review, commit, PR, issue, or comment URLs when the source
 provides them. Missing source signals are stored as `not_available`; partial
 evidence has an `evidence_gap`.
 
+Routing dimensions are enriched from the exact dispatch telemetry row when its
+dispatch, queue item, repository, and PR identities agree. Exact terminal
+provider/model values take precedence over requested values; requested values
+are used only when terminal adapter values are unavailable. Missing, invalid,
+or unreadable telemetry is nonblocking and does not change PR evaluation
+coverage.
+
 Review severity is accepted only from an explicit
 `[severity:critical|high|medium|low]` review-body tag. Fix-up ratio is:
 

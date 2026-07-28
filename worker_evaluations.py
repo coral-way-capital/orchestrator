@@ -768,11 +768,46 @@ def _queue_context(
     }
 
 
+def _telemetry_context(
+    item_id: str | None,
+    dispatch_id: str | None,
+    repo: str,
+    pr_number: int,
+    telemetry_db_path: Path | str,
+) -> dict[str, Any]:
+    """Resolve exact dispatch dimensions without making telemetry a dependency."""
+    if not item_id or not dispatch_id:
+        return {}
+    import dispatch_telemetry
+
+    try:
+        row = dispatch_telemetry.get_dispatch(
+            dispatch_id, db_path=telemetry_db_path
+        )
+    except (OSError, sqlite3.Error, ValueError):
+        return {}
+    if (
+        not row
+        or row.get("item_id") != item_id
+        or row.get("repo") not in (None, repo)
+        or row.get("pr_number") not in (None, pr_number)
+    ):
+        return {}
+    return {
+        "model_provider": (
+            row.get("model_provider") or row.get("requested_model_provider")
+        ),
+        "model": row.get("model") or row.get("requested_model"),
+        "task_class": row.get("task_class"),
+    }
+
+
 def refresh_from_pr_outcomes(
     *,
     pr_db_path: Path | str,
     db_path: Path | str = EVALUATIONS_DB,
     queue_file: Path | str | None = None,
+    telemetry_db_path: Path | str | None = None,
     evaluated_at: str | None = None,
 ) -> dict[str, Any]:
     """Read terminal PRs from #17's ledger without calling or mutating GitHub."""
@@ -831,6 +866,20 @@ def refresh_from_pr_outcomes(
                     outcome.get("dispatch_id"),
                     queue_file,
                 )
+            )
+        if telemetry_db_path is not None:
+            pull.update(
+                {
+                    key: value
+                    for key, value in _telemetry_context(
+                        outcome.get("item_id"),
+                        outcome.get("dispatch_id"),
+                        outcome["repo"],
+                        outcome["pr_number"],
+                        telemetry_db_path,
+                    ).items()
+                    if value is not None
+                }
             )
         pulls.append(pull)
     return refresh_registry(pulls, db_path=db_path, evaluated_at=evaluated_at)
@@ -1000,12 +1049,16 @@ def routing_gate(
 
 def main(argv: list[str] | None = None) -> int:
     """Refresh the registry and print a weekly recommendation digest."""
+    import dispatch_telemetry
     import pr_outcomes
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pr-outcomes-db", default=str(pr_outcomes.OUTCOMES_DB))
     parser.add_argument("--evaluations-db", default=str(EVALUATIONS_DB))
     parser.add_argument("--queue-file", default=str(pr_outcomes.QUEUE_FILE))
+    parser.add_argument(
+        "--dispatch-telemetry-db", default=str(dispatch_telemetry.TELEMETRY_DB)
+    )
     parser.add_argument("--week-start", required=True)
     parser.add_argument("--evaluated-at")
     args = parser.parse_args(argv)
@@ -1013,6 +1066,7 @@ def main(argv: list[str] | None = None) -> int:
         pr_db_path=args.pr_outcomes_db,
         db_path=args.evaluations_db,
         queue_file=args.queue_file,
+        telemetry_db_path=args.dispatch_telemetry_db,
         evaluated_at=args.evaluated_at,
     )
     digest = build_weekly_digest(
