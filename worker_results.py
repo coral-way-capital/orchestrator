@@ -46,7 +46,9 @@ Status-specific fields:
   infers success and keeps the item queryable for backfill.
 
 Optional fields: ``repo``, ``issue_number``, ``session_id``, ``evidence``
-(free-form dict of URLs, SHAs, log excerpts).
+(free-form dict of URLs, SHAs, log excerpts), and exact ``telemetry``. Telemetry
+accepts provider-response usage, auditable cost, and independently sourced
+accepted-outcome metadata; unsupported values remain ``not_available``.
 
 Idempotency rules
 -----------------
@@ -69,6 +71,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import fcntl
+
+from dispatch_telemetry import normalize_terminal_telemetry, record_terminal_result
 
 WORKER_RESULT_VERSION = 1
 TERMINAL_STATUSES = ("completed", "failed", "unknown")
@@ -187,6 +191,8 @@ def validate_worker_result(payload: dict[str, Any]) -> dict[str, Any]:
             "dispatch_id must be a non-empty cwc-issue-dispatch identifier"
         )
     item_id = str(_require(payload.get("item_id"), "item_id")).strip()
+    if len(item_id) > 512:
+        raise WorkerResultError("item_id exceeds 512 characters")
     item_match = ITEM_ID_RE.fullmatch(item_id)
     if not item_match:
         raise WorkerResultError("item_id must have the form owner/repo#number")
@@ -196,6 +202,8 @@ def validate_worker_result(payload: dict[str, Any]) -> dict[str, Any]:
             f"status must be one of {TERMINAL_STATUSES}; got {status!r}"
         )
     occurred_at = str(_require(payload.get("occurred_at"), "occurred_at")).strip()
+    if len(occurred_at) > 128:
+        raise WorkerResultError("occurred_at must be an ISO-8601 timestamp")
     try:
         occurred = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
     except ValueError as exc:
@@ -213,6 +221,7 @@ def validate_worker_result(payload: dict[str, Any]) -> dict[str, Any]:
             isinstance(issue_number, bool)
             or not isinstance(issue_number, int)
             or issue_number != int(item_match.group("number"))
+            or issue_number > (1 << 63) - 1
         ):
             raise WorkerResultError("issue_number must match item_id")
     evidence = payload.get("evidence", {})
@@ -235,6 +244,16 @@ def validate_worker_result(payload: dict[str, Any]) -> dict[str, Any]:
         "source": str(payload.get("source") or "worker"),
         "occurred_at": str(occurred_at),
     }
+    if normalized["session_id"] is not None:
+        if (
+            not isinstance(normalized["session_id"], str)
+            or len(normalized["session_id"]) > 512
+        ):
+            raise WorkerResultError("session_id must be at most 512 characters")
+    try:
+        normalized["telemetry"] = normalize_terminal_telemetry(payload.get("telemetry"))
+    except ValueError as exc:
+        raise WorkerResultError(str(exc)) from exc
 
     if status == "completed":
         pr_number = payload.get("pr_number")
@@ -245,6 +264,8 @@ def validate_worker_result(payload: dict[str, Any]) -> dict[str, Any]:
                 raise WorkerResultError(f"pr_number must be an integer: {pr_number!r}") from exc
             if isinstance(pr_number, bool) or normalized["pr_number"] <= 0:
                 raise WorkerResultError("pr_number must be a positive integer")
+            if normalized["pr_number"] > (1 << 63) - 1:
+                raise WorkerResultError("pr_number must fit a 64-bit integer")
     elif status == "failed":
         normalized["error_summary"] = str(
             _require(payload.get("error_summary"), "error_summary (required for failed)")
@@ -561,7 +582,8 @@ def apply_outcome_to_queue(result: dict[str, Any], queue: dict[str, Any],
 def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
                          db_path: Path | str = RESULTS_DB,
                          queue_loader=None, queue_saver=None,
-                         event_logger=None) -> dict[str, Any]:
+                         event_logger=None,
+                         telemetry_db_path: Path | str | None = None) -> dict[str, Any]:
     """Validate, persist, and apply a worker-result payload.
 
     Idempotent: duplicate delivery is safe and audited. Returns a dict with::
@@ -582,6 +604,8 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
 
     dispatch_id = result.get("dispatch_id")
     item_id = result["item_id"]
+    telemetry_recorded = False
+    telemetry_error_type = None
 
     if queue_loader is None:
         import queue as queue_mod  # type: ignore[import-not-found]
@@ -622,6 +646,8 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
             db.close()
 
         queue = queue_loader()
+        dispatch_context, _ = _find_in_progress_item(queue, item_id)
+        dispatch_context = dict(dispatch_context or {})
         # A same-outcome redelivery may repair a ledger/queue partial state. A
         # conflicting terminal result never mutates the queue.
         summary = apply_outcome_to_queue(
@@ -641,6 +667,23 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
             trace_item, _ = _find_in_progress_item(queue, item_id)
             if trace_item is not None:
                 _record_terminal_trace(trace_item, result)
+        if not (
+            conflict
+            or summary.get("dispatch_mismatch")
+            or summary.get("dispatch_unverifiable")
+        ):
+            try:
+                record_terminal_result(
+                    result,
+                    dispatch_context=dispatch_context,
+                    db_path=telemetry_db_path or db_path,
+                )
+                telemetry_recorded = True
+            except Exception as exc:
+                # Telemetry is supplemental: a valid durable terminal outcome
+                # must remain accepted even when the telemetry ledger is
+                # unavailable or rejects conflicting identity.
+                telemetry_error_type = type(exc).__name__
 
     if summary.get("applied"):
         try:
@@ -674,6 +717,19 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
         },
         source=result.get("source") or "worker",
     )
+    if telemetry_error_type:
+        event_logger(
+            "dispatch_telemetry.error",
+            item_id=item_id,
+            repo=result.get("repo"),
+            issue_number=result.get("issue_number"),
+            details={
+                "dispatch_id": dispatch_id,
+                "phase": "terminal",
+                "error_type": telemetry_error_type,
+            },
+            source=result.get("source") or "worker",
+        )
 
     return {
         "ok": True,
@@ -684,6 +740,7 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
         "conflict": conflict,
         "applied": summary.get("applied"),
         "already_terminal": summary.get("already_terminal"),
+        "telemetry_recorded": telemetry_recorded,
         "result": _public_result(result),
         "summary": summary,
     }
