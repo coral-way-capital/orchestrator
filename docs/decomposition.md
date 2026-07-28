@@ -14,13 +14,17 @@ non-shippable children fail before any GitHub call.
 An invalid first submission remains pending with stable validation errors and
 returns `retry`. An invalid second submission moves to `failed` with
 `status=manual`, `manual_required=true`, and `failure_class=validation_failed`.
-There are no additional automatic attempts.
+There are no additional automatic attempts. Per-parent file locks serialize
+concurrent submissions, terminal replays return the already-durable result, and
+short queue-file locks prevent concurrent webhook enqueues from being lost.
 
 Publication starts only after complete validation. If a later GitHub create
 fails, the publisher closes every child created in that attempt and records
 rollback evidence before routing the parent to manual handling. A rollback
 failure is surfaced as `rollback_complete=false`; it is never hidden as a
-successful or ordinary failed decomposition.
+successful or ordinary failed decomposition. Each child body carries a
+deterministic parent/child marker; after a process restart, the publisher reuses
+an already-open marked issue instead of creating a duplicate.
 
 ## Historical RCA
 

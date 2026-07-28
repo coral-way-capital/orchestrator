@@ -10,12 +10,15 @@ an explicit manual-review state.
 from __future__ import annotations
 
 import argparse
+import fcntl
+import hashlib
 import json
 import os
 import re
 import subprocess
 import tempfile
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -350,7 +353,7 @@ def _load_queue(queue_path: Path) -> dict[str, list[dict[str, Any]]]:
     return queue
 
 
-def _save_queue(queue_path: Path, queue: dict[str, Any]) -> None:
+def save_queue(queue_path: Path, queue: dict[str, Any]) -> None:
     queue_path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(prefix=f".{queue_path.name}.", dir=queue_path.parent)
     try:
@@ -365,11 +368,63 @@ def _save_queue(queue_path: Path, queue: dict[str, Any]) -> None:
             os.unlink(temporary_name)
 
 
+@contextmanager
+def queue_lock(queue_path: Path):
+    """Serialize short queue-file read/modify/write transactions."""
+    queue_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = queue_path.with_name(f".{queue_path.name}.lock")
+    with lock_path.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _item_lock(queue_path: Path, item_id: str):
+    """Serialize submissions for one parent without blocking unrelated enqueues."""
+    digest = hashlib.sha256(item_id.encode("utf-8")).hexdigest()
+    lock_path = queue_path.with_name(f".{queue_path.name}.{digest}.lock")
+    with lock_path.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def _find_pending(queue: dict[str, Any], item_id: str) -> tuple[int, dict[str, Any]]:
     for index, item in enumerate(queue["pending"]):
         if item.get("id") == item_id:
             return index, item
     raise ValueError(f"Pending decomposition not found: {item_id}")
+
+
+def _terminal_result(queue: dict[str, Any], item_id: str) -> dict[str, Any] | None:
+    for item in queue["completed"]:
+        if item.get("id") == item_id:
+            return {
+                "status": "completed",
+                "children": item.get("child_issues", []),
+                "idempotent": True,
+            }
+    for item in queue["failed"]:
+        if item.get("id") == item_id and item.get("manual_required"):
+            result = {
+                "status": "manual",
+                "attempt": item.get(
+                    "submission_attempt", item.get("validation_attempts", 0)
+                ),
+                "failure_class": item.get("failure_class", "validation_failed"),
+                "idempotent": True,
+            }
+            if item.get("validation_errors"):
+                result["errors"] = item["validation_errors"]
+            if "rollback_complete" in item:
+                result["rollback_complete"] = item["rollback_complete"]
+            return result
+    return None
 
 
 def submit_plan(
@@ -382,67 +437,87 @@ def submit_plan(
 ) -> dict[str, Any]:
     """Validate a plan, enforce retry policy, publish, and update its queue state."""
     queue_path = Path(queue_path)
-    queue = _load_queue(queue_path)
-    index, item = _find_pending(queue, item_id)
-    try:
-        plan = validate_plan(raw_plan)
-    except PlanValidationError as exc:
-        attempts = int(item.get("validation_attempts", 0)) + 1
-        item["validation_attempts"] = attempts
-        item["validation_errors"] = exc.errors
-        item["last_validation_at"] = now().isoformat()
-        if attempts == 1:
-            _save_queue(queue_path, queue)
-            return {"status": "retry", "attempt": attempts, "errors": exc.errors}
-        failed = queue["pending"].pop(index)
-        failed.update(
-            {
-                "status": "manual",
-                "manual_required": True,
-                "failure_class": "validation_failed",
-                "failed_at": now().isoformat(),
-            }
-        )
-        queue["failed"].append(failed)
-        _save_queue(queue_path, queue)
-        return {"status": "manual", "attempt": attempts, "errors": exc.errors}
+    with _item_lock(queue_path, item_id):
+        with queue_lock(queue_path):
+            queue = _load_queue(queue_path)
+            terminal = _terminal_result(queue, item_id)
+            if terminal is not None:
+                return terminal
+            index, item = _find_pending(queue, item_id)
+            try:
+                plan = validate_plan(raw_plan)
+            except PlanValidationError as exc:
+                attempts = int(item.get("validation_attempts", 0)) + 1
+                item["validation_attempts"] = attempts
+                item["validation_errors"] = exc.errors
+                item["last_validation_at"] = now().isoformat()
+                if attempts == 1:
+                    save_queue(queue_path, queue)
+                    return {"status": "retry", "attempt": attempts, "errors": exc.errors}
+                failed = queue["pending"].pop(index)
+                failed.update(
+                    {
+                        "status": "manual",
+                        "manual_required": True,
+                        "failure_class": "validation_failed",
+                        "failed_at": now().isoformat(),
+                    }
+                )
+                queue["failed"].append(failed)
+                save_queue(queue_path, queue)
+                return {"status": "manual", "attempt": attempts, "errors": exc.errors}
+            parent = copy_parent(item)
 
-    try:
-        created = publisher(copy_parent(item), plan["children"])
-    except PublicationError as exc:
-        failed = queue["pending"].pop(index)
-        failed.update(
-            {
-                "status": "manual",
-                "manual_required": True,
-                "failure_class": "publication_failed",
-                "failure_message": sanitize_evidence(str(exc)),
-                "rollback_complete": exc.rollback_complete,
-                "created_child_issues": exc.created,
-                "failed_at": now().isoformat(),
-            }
-        )
-        queue["failed"].append(failed)
-        _save_queue(queue_path, queue)
-        return {
-            "status": "manual",
-            "attempt": int(item.get("validation_attempts", 0)) + 1,
-            "failure_class": "publication_failed",
-            "rollback_complete": exc.rollback_complete,
-        }
+        try:
+            created = publisher(parent, plan["children"])
+        except PublicationError as exc:
+            with queue_lock(queue_path):
+                queue = _load_queue(queue_path)
+                terminal = _terminal_result(queue, item_id)
+                if terminal is not None:
+                    return terminal
+                index, item = _find_pending(queue, item_id)
+                submission_attempt = int(item.get("validation_attempts", 0)) + 1
+                failed = queue["pending"].pop(index)
+                failed.update(
+                    {
+                        "status": "manual",
+                        "manual_required": True,
+                        "failure_class": "publication_failed",
+                        "failure_message": sanitize_evidence(str(exc)),
+                        "rollback_complete": exc.rollback_complete,
+                        "created_child_issues": exc.created,
+                        "submission_attempt": submission_attempt,
+                        "failed_at": now().isoformat(),
+                    }
+                )
+                queue["failed"].append(failed)
+                save_queue(queue_path, queue)
+                return {
+                    "status": "manual",
+                    "attempt": submission_attempt,
+                    "failure_class": "publication_failed",
+                    "rollback_complete": exc.rollback_complete,
+                }
 
-    completed = queue["pending"].pop(index)
-    completed.update(
-        {
-            "status": "completed",
-            "completed_at": now().isoformat(),
-            "validated_plan": plan,
-            "child_issues": created,
-        }
-    )
-    queue["completed"].append(completed)
-    _save_queue(queue_path, queue)
-    return {"status": "completed", "children": created}
+        with queue_lock(queue_path):
+            queue = _load_queue(queue_path)
+            terminal = _terminal_result(queue, item_id)
+            if terminal is not None:
+                return terminal
+            index, _ = _find_pending(queue, item_id)
+            completed = queue["pending"].pop(index)
+            completed.update(
+                {
+                    "status": "completed",
+                    "completed_at": now().isoformat(),
+                    "validated_plan": plan,
+                    "child_issues": created,
+                }
+            )
+            queue["completed"].append(completed)
+            save_queue(queue_path, queue)
+            return {"status": "completed", "children": created}
 
 
 def copy_parent(item: dict[str, Any]) -> dict[str, Any]:
@@ -464,6 +539,8 @@ def _child_body(
     ] or ["None"]
     return "\n".join(
         [
+            _publication_marker(parent, child),
+            "",
             f"Parent: #{parent['issue_number']}",
             "",
             "## Scope",
@@ -487,6 +564,80 @@ def _child_body(
     )
 
 
+def _publication_marker(parent: dict[str, Any], child: dict[str, Any]) -> str:
+    return (
+        "<!-- cwc-decomposition:v1 "
+        f"parent={parent['issue_number']} child={child['id']} -->"
+    )
+
+
+def _existing_published_children(
+    parent: dict[str, Any],
+    children: list[dict[str, Any]],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]],
+) -> dict[str, dict[str, Any]]:
+    result = runner(
+        [
+            "gh",
+            "api",
+            "--paginate",
+            "--slurp",
+            "--method",
+            "GET",
+            f"repos/{parent['repo']}/issues",
+            "-f",
+            "state=all",
+            "-f",
+            "labels=epic-child",
+            "-f",
+            "per_page=100",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or "gh issue lookup failed")
+    try:
+        pages = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        raise RuntimeError("gh issue lookup returned invalid JSON") from None
+    if not isinstance(pages, list) or not all(isinstance(page, list) for page in pages):
+        raise RuntimeError("gh issue lookup returned an invalid result shape")
+
+    open_issues = [
+        issue
+        for page in pages
+        for issue in page
+        if isinstance(issue, dict) and str(issue.get("state", "")).lower() == "open"
+    ]
+    existing: dict[str, dict[str, Any]] = {}
+    for child in children:
+        marker = _publication_marker(parent, child)
+        matches = [
+            issue for issue in open_issues if marker in str(issue.get("body") or "")
+        ]
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"multiple open issues use decomposition marker for child {child['id']}"
+            )
+        if matches:
+            issue = matches[0]
+            number = issue.get("number")
+            url = issue.get("html_url")
+            if isinstance(number, bool) or not isinstance(number, int) or not _nonempty_string(url):
+                raise RuntimeError("gh issue lookup returned incomplete issue metadata")
+            existing[child["id"]] = {
+                "id": child["id"],
+                "number": number,
+                "title": child["title"],
+                "url": url,
+                "reused": True,
+            }
+    return existing
+
+
 def publish_to_github(
     parent: dict[str, Any],
     children: list[dict[str, Any]],
@@ -495,9 +646,16 @@ def publish_to_github(
 ) -> list[dict[str, Any]]:
     """Publish validated children and close every created child on any failure."""
     created: list[dict[str, Any]] = []
+    created_this_attempt: list[dict[str, Any]] = []
     created_by_id: dict[str, dict[str, Any]] = {}
     try:
+        existing = _existing_published_children(parent, children, runner=runner)
         for child in children:
+            if child["id"] in existing:
+                created_issue = existing[child["id"]]
+                created.append(created_issue)
+                created_by_id[child["id"]] = created_issue
+                continue
             result = runner(
                 [
                     "gh",
@@ -528,13 +686,15 @@ def publish_to_github(
                 "number": int(match.group(1)),
                 "title": child["title"],
                 "url": result.stdout.strip(),
+                "reused": False,
             }
             created.append(created_issue)
+            created_this_attempt.append(created_issue)
             created_by_id[child["id"]] = created_issue
         return created
     except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
         rollback_complete = True
-        for issue in reversed(created):
+        for issue in reversed(created_this_attempt):
             try:
                 rollback = runner(
                     [
@@ -557,7 +717,7 @@ def publish_to_github(
             except (OSError, subprocess.SubprocessError):
                 rollback_complete = False
         raise PublicationError(
-            str(exc), created=created, rollback_complete=rollback_complete
+            str(exc), created=created_this_attempt, rollback_complete=rollback_complete
         ) from None
 
 
@@ -676,6 +836,8 @@ def audit_submission(
     logger: Callable[..., None],
 ) -> None:
     """Emit structured events after queue state has been durably written."""
+    if result.get("idempotent"):
+        return
     repo, separator, issue_text = item_id.rpartition("#")
     issue_number = int(issue_text) if separator and issue_text.isdigit() else None
     common = {"repo": repo or None, "source": "epic-decomposer-v2"}

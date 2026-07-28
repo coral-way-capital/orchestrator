@@ -5,6 +5,7 @@ import copy
 import json
 import subprocess
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -172,6 +173,57 @@ class SubmissionTests(unittest.TestCase):
         self.assertEqual(queue["failed"], [])
         self.assertEqual(queue["completed"][0]["child_issues"], result["children"])
 
+    def test_concurrent_replay_publishes_once_and_returns_durable_result(self):
+        publisher_entered = threading.Event()
+        release_publisher = threading.Event()
+        calls = []
+        results = []
+        errors = []
+
+        def blocking_publisher(parent, children):
+            calls.append((copy.deepcopy(parent), copy.deepcopy(children)))
+            publisher_entered.set()
+            self.assertTrue(release_publisher.wait(timeout=2))
+            return [{"number": 101}, {"number": 102}]
+
+        def submit():
+            try:
+                results.append(
+                    decomposition.submit_plan(
+                        queue_item()["id"],
+                        valid_plan(),
+                        queue_path=self.queue_path,
+                        publisher=blocking_publisher,
+                    )
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=submit)
+        second = threading.Thread(target=submit)
+        first.start()
+        self.assertTrue(publisher_entered.wait(timeout=2))
+        second.start()
+        with decomposition.queue_lock(self.queue_path):
+            queue = json.loads(self.queue_path.read_text())
+            other = queue_item()
+            other["id"] = "coral-way-capital/demo#20"
+            other["issue_number"] = 20
+            queue["pending"].append(other)
+            decomposition.save_queue(self.queue_path, queue)
+        release_publisher.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual([result["status"] for result in results], ["completed", "completed"])
+        self.assertTrue(any(result.get("idempotent") for result in results))
+        queue = json.loads(self.queue_path.read_text())
+        self.assertEqual([item["id"] for item in queue["pending"]], [other["id"]])
+
     def test_publication_failure_routes_to_manual_with_rollback_evidence(self):
         def failed_publisher(parent, children):
             raise decomposition.PublicationError(
@@ -192,13 +244,54 @@ class SubmissionTests(unittest.TestCase):
         self.assertEqual(queue["completed"], [])
         self.assertEqual(queue["failed"][0]["failure_class"], "publication_failed")
         self.assertTrue(queue["failed"][0]["rollback_complete"])
+        replay = decomposition.submit_plan(
+            queue_item()["id"],
+            valid_plan(),
+            queue_path=self.queue_path,
+            publisher=lambda *args: self.fail("terminal replay must not publish"),
+        )
+        self.assertEqual(replay["status"], "manual")
+        self.assertEqual(replay["attempt"], result["attempt"])
+        self.assertTrue(replay["idempotent"])
 
 
 class GitHubPublisherTests(unittest.TestCase):
+    def test_replay_reuses_open_children_with_deterministic_markers(self):
+        children = valid_plan()["children"]
+        existing = [
+            {
+                "number": 101,
+                "title": children[0]["title"],
+                "html_url": "https://github.com/org/repo/issues/101",
+                "body": "<!-- cwc-decomposition:v1 parent=19 child=schema -->",
+                "state": "open",
+            },
+            {
+                "number": 102,
+                "title": children[1]["title"],
+                "html_url": "https://github.com/org/repo/issues/102",
+                "body": "<!-- cwc-decomposition:v1 parent=19 child=workflow -->",
+                "state": "open",
+            },
+        ]
+        calls = []
+
+        def runner(arguments, **kwargs):
+            calls.append(arguments)
+            return subprocess.CompletedProcess([], 0, json.dumps([existing]), "")
+
+        result = decomposition.publish_to_github(queue_item(), children, runner=runner)
+
+        self.assertEqual([child["number"] for child in result], [101, 102])
+        self.assertTrue(all(child["reused"] for child in result))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0:3], ["gh", "api", "--paginate"])
+
     def test_partial_publication_is_compensated_before_reporting_failure(self):
         calls = []
         responses = iter(
             [
+                subprocess.CompletedProcess([], 0, "[[]]", ""),
                 subprocess.CompletedProcess([], 0, "https://github.com/org/repo/issues/101\n", ""),
                 subprocess.CompletedProcess([], 1, "", "API unavailable"),
                 subprocess.CompletedProcess([], 0, "", ""),
@@ -298,6 +391,17 @@ class ReportingTests(unittest.TestCase):
         )
         self.assertEqual(calls[0][1]["details"]["parent_id"], queue_item()["id"])
         self.assertEqual(calls[0][1]["item_id"], "coral-way-capital/demo#101")
+
+    def test_idempotent_submission_replay_does_not_duplicate_audit_events(self):
+        calls = []
+
+        decomposition.audit_submission(
+            queue_item()["id"],
+            {"status": "completed", "children": [{"number": 101}], "idempotent": True},
+            logger=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":
