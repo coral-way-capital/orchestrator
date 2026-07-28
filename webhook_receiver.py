@@ -44,6 +44,8 @@ from worker_results import (
     list_results as list_worker_results,
 )
 from portfolio import PortfolioError, build_advice_brief, get_project, load_portfolio
+from decomposition import queue_lock as decomposition_queue_lock
+from decomposition import save_queue as save_decomposition_queue
 try:
     import issue_queue_db
 except Exception:
@@ -243,44 +245,47 @@ def load_decompose_queue():
 
 
 def save_decompose_queue(queue):
-    DECOMPOSE_QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
     if len(queue["completed"]) > 100:
         queue["completed"] = queue["completed"][-100:]
-    with open(DECOMPOSE_QUEUE_FILE, "w") as f:
-        json.dump(queue, f, indent=2)
+    save_decomposition_queue(DECOMPOSE_QUEUE_FILE, queue)
 
 
 def enqueue_for_decomposition(repo, issue_number, title, body, author, labels, html_url):
     """Add a large issue to the decompose queue."""
-    queue = load_decompose_queue()
-    item_id = f"{repo}#{issue_number}"
+    with decomposition_queue_lock(DECOMPOSE_QUEUE_FILE):
+        queue = load_decompose_queue()
+        item_id = f"{repo}#{issue_number}"
 
-    all_ids = [x["id"] for x in queue["pending"]]
-    if item_id in all_ids:
-        print(f"DECOMPOSE SKIP: {item_id} already in decompose queue")
-        return False
+        all_ids = {
+            item.get("id")
+            for status in ("pending", "completed", "failed")
+            for item in queue.get(status, [])
+        }
+        if item_id in all_ids:
+            print(f"DECOMPOSE SKIP: {item_id} already in decompose queue")
+            return False
 
-    if len(queue["pending"]) >= MAX_DECOMPOSE_PENDING:
-        log_event("guard.triggered", item_id=item_id, repo=repo,
-                  issue_number=issue_number, title=title,
-                  details={"guard": "decompose_queue_full", "max": MAX_DECOMPOSE_PENDING})
-        print(f"DECOMPOSE SKIP: queue full ({MAX_DECOMPOSE_PENDING})")
-        return False
+        if len(queue["pending"]) >= MAX_DECOMPOSE_PENDING:
+            log_event("guard.triggered", item_id=item_id, repo=repo,
+                      issue_number=issue_number, title=title,
+                      details={"guard": "decompose_queue_full", "max": MAX_DECOMPOSE_PENDING})
+            print(f"DECOMPOSE SKIP: queue full ({MAX_DECOMPOSE_PENDING})")
+            return False
 
-    item = {
-        "id": item_id,
-        "repo": repo,
-        "issue_number": issue_number,
-        "title": title,
-        "body": body or "",
-        "author": author,
-        "labels": labels,
-        "html_url": html_url,
-        "enqueued_at": datetime.now(timezone.utc).isoformat(),
-    }
+        item = {
+            "id": item_id,
+            "repo": repo,
+            "issue_number": issue_number,
+            "title": title,
+            "body": body or "",
+            "author": author,
+            "labels": labels,
+            "html_url": html_url,
+            "enqueued_at": datetime.now(timezone.utc).isoformat(),
+        }
 
-    queue["pending"].append(item)
-    save_decompose_queue(queue)
+        queue["pending"].append(item)
+        save_decompose_queue(queue)
     log_event("decompose.enqueued", item_id=item_id, repo=repo,
               issue_number=issue_number, title=title,
               details={"author": author, "labels": labels})
