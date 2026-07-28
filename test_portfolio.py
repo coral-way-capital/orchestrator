@@ -154,7 +154,18 @@ class PortfolioScoreTests(unittest.TestCase):
 
     def test_dispatch_projection_carries_the_canonical_outcome_contract(self):
         contract = outcome_contract(project())
-        self.assertEqual(contract["contract_version"], 1)
+        self.assertEqual(
+            set(contract),
+            {
+                "contract_version",
+                "project_id",
+                "outcome_unit",
+                "finish_gate",
+                "evidence_requirement",
+                "approval_boundary",
+            },
+        )
+        self.assertEqual(contract["contract_version"], 2)
         self.assertEqual(contract["project_id"], "alpha")
         self.assertEqual(contract["outcome_unit"], "One accepted work unit")
         self.assertTrue(contract["evidence_requirement"])
@@ -188,6 +199,19 @@ class PortfolioValidationTests(unittest.TestCase):
         invalid = project()
         invalid["dimensions"]["finishability"]["rating"] = 2.5
         with self.assertRaisesRegex(PortfolioError, "integer between 0 and 5"):
+            validate_manifest(manifest([invalid]))
+
+    def test_dispatch_contract_text_and_authority_must_be_non_empty_strings(self):
+        for field in ("outcome_unit", "finish_gate"):
+            invalid = project(**{field: " "})
+            with self.subTest(field=field), self.assertRaisesRegex(
+                PortfolioError, field
+            ):
+                validate_manifest(manifest([invalid]))
+
+        invalid = project()
+        invalid["approval_boundary"]["acceptance_authority"] = None
+        with self.assertRaisesRegex(PortfolioError, "acceptance_authority"):
             validate_manifest(manifest([invalid]))
 
         invalid_bool = project()

@@ -4,75 +4,18 @@
     {
       "trace_id": "synthetic-rsm-001",
       "client_slug": "rsm",
-      "outcome_contract": {
-        "contract_version": 1,
-        "project_id": "rsm-eckhart",
-        "outcome_unit": "One synthetic reviewer-accepted proposal package",
-        "finish_gate": "Synthetic reviewer accepts the redacted proposal-package run",
-        "evidence_requirement": ["Reviewer confirmation reference", "Redacted run reference"],
-        "approval_boundary": {
-          "production": "required",
-          "spending": "required",
-          "client_communication": "required",
-          "acceptance_authority": "Synthetic RSM reviewer"
-        },
-        "provenance": {
-          "source": "cwc-control-plane/portfolio/projects.json",
-          "portfolio_version": 2,
-          "project_updated_at": "2026-07-27"
-        }
+      "project_contract": {
+        "version": 2,
+        "project_id": "rsm-eckhart"
       },
       "stages": {
-        "project": {"reference": "project:rsm-eckhart", "occurred_at": "2026-07-01T09:00:00Z"},
-        "issue": {"reference": "github:synthetic/rsm#101", "occurred_at": "2026-07-01T10:00:00Z"},
-        "run": {"reference": "dispatch:synthetic-rsm-001", "occurred_at": "2026-07-01T11:00:00Z"},
-        "pr": {"reference": "github:synthetic/rsm/pull/201", "occurred_at": "2026-07-01T13:00:00Z"},
-        "reviewed": {"reference": "github:synthetic/rsm/pull/201#review", "occurred_at": "2026-07-02T09:00:00Z"},
-        "merged": {"reference": "github:synthetic/rsm/pull/201#merge", "occurred_at": "2026-07-02T10:00:00Z"},
-        "accepted": {"reference": "acceptance:synthetic-rsm-001", "occurred_at": "2026-07-03T15:00:00Z"}
-      },
-      "acceptance": {
-        "reviewer": {"reference": "reviewer:synthetic-rsm-primary", "role": "responsible client reviewer"},
-        "status": "accepted",
-        "evidence_source": {"source_type": "client_confirmation", "reference": "vault:synthetic/rsm/acceptance-001"},
-        "observed_at": "2026-07-03T14:55:00Z",
-        "accepted_at": "2026-07-03T15:00:00Z",
-        "provenance": {
-          "system": "synthetic-fixture",
-          "recorded_at": "2026-07-03T15:05:00Z",
-          "record_reference": "fixture:outcome-traces/rsm-001"
-        }
-      }
-    },
-    {
-      "trace_id": "synthetic-zenna-001",
-      "client_slug": "zenna",
-      "outcome_contract": {
-        "contract_version": 1,
-        "project_id": "zenna-crm",
-        "outcome_unit": "One synthetic qualified lead progressed to an appointment",
-        "finish_gate": "Synthetic reviewer accepts the redacted lead-to-appointment run",
-        "evidence_requirement": ["Reviewer confirmation reference", "Redacted workflow reference"],
-        "approval_boundary": {
-          "production": "required",
-          "spending": "required",
-          "client_communication": "required",
-          "acceptance_authority": "Synthetic Zenna reviewer"
-        },
-        "provenance": {
-          "source": "cwc-control-plane/portfolio/projects.json",
-          "portfolio_version": 2,
-          "project_updated_at": "2026-07-27"
-        }
-      },
-      "stages": {
-        "project": {"reference": "project:zenna-crm", "occurred_at": "2026-07-07T09:00:00Z"},
-        "issue": {"reference": "github:synthetic/zenna#102", "occurred_at": "2026-07-07T10:00:00Z"},
-        "run": {"reference": "dispatch:synthetic-zenna-001", "occurred_at": "2026-07-07T11:00:00Z"},
-        "pr": {"reference": "github:synthetic/zenna/pull/202", "occurred_at": "2026-07-07T13:00:00Z"},
-        "reviewed": {"reference": "github:synthetic/zenna/pull/202#review", "occurred_at": "2026-07-08T09:00:00Z"},
-        "merged": {"reference": "github:synthetic/zenna/pull/202#merge", "occurred_at": "2026-07-08T10:00:00Z"},
-        "accepted": {"reference": "acceptance:synthetic-zenna-001-pending", "occurred_at": null}
+        "project": {"reference": "synthetic://projects/rsm-eckhart", "occurred_at": "2026-07-01T09:00:00Z"},
+        "issue": {"reference": "synthetic://github/issues/101", "occurred_at": "2026-07-01T10:00:00Z"},
+        "run": {"reference": "synthetic://runs/rsm-eckhart-001", "occurred_at": "2026-07-01T11:00:00Z"},
+        "pr": {"reference": "synthetic://github/prs/201", "occurred_at": "2026-07-01T13:00:00Z"},
+        "reviewed": {"reference": "synthetic://github/reviews/201", "occurred_at": "2026-07-02T09:00:00Z"},
+        "merged": {"reference": "synthetic://github/merges/201", "occurred_at": "2026-07-02T10:00:00Z"},
+        "accepted": {"reference": null, "occurred_at": null}
       },
       "acceptance": {
         "reviewer": null,
@@ -80,11 +23,32 @@
         "evidence_source": null,
         "observed_at": null,
         "accepted_at": null,
-        "provenance": {
-          "system": "synthetic-fixture",
-          "recorded_at": "2026-07-08T10:05:00Z",
-          "record_reference": "fixture:outcome-traces/zenna-001"
-        }
+        "provenance": null
+      }
+    },
+    {
+      "trace_id": "synthetic-zenna-001",
+      "client_slug": "zenna",
+      "project_contract": {
+        "version": 2,
+        "project_id": "zenna-crm"
+      },
+      "stages": {
+        "project": {"reference": "synthetic://projects/zenna-crm", "occurred_at": "2026-07-07T09:00:00Z"},
+        "issue": {"reference": "synthetic://github/issues/102", "occurred_at": "2026-07-07T10:00:00Z"},
+        "run": {"reference": "synthetic://runs/zenna-crm-001", "occurred_at": "2026-07-07T11:00:00Z"},
+        "pr": {"reference": "synthetic://github/prs/202", "occurred_at": "2026-07-07T13:00:00Z"},
+        "reviewed": {"reference": "synthetic://github/reviews/202", "occurred_at": "2026-07-08T09:00:00Z"},
+        "merged": {"reference": "synthetic://github/merges/202", "occurred_at": "2026-07-08T10:00:00Z"},
+        "accepted": {"reference": null, "occurred_at": null}
+      },
+      "acceptance": {
+        "reviewer": null,
+        "status": "unknown",
+        "evidence_source": null,
+        "observed_at": null,
+        "accepted_at": null,
+        "provenance": null
       }
     }
   ]

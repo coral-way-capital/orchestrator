@@ -14,6 +14,7 @@ Also handles:
 
 import hmac
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -31,7 +32,29 @@ from urllib.parse import parse_qs, unquote, urlparse
 # Add parent to path for queue import
 BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, str(BASE_DIR))
-from queue import enqueue, is_issue_assigned_to_allowed, _assignee_logins, allowed_assignees, visible_unassigned_repos
+
+# ``queue.py`` predates packaging this service. Reuse it under its historical
+# name in production, but load it by path when a test runner imported stdlib
+# ``queue`` first.
+_queue_path = (BASE_DIR / "queue.py").resolve()
+_loaded_queue = sys.modules.get("queue")
+if _loaded_queue is None:
+    import queue as _issue_queue
+elif Path(getattr(_loaded_queue, "__file__", "")).resolve() == _queue_path:
+    _issue_queue = _loaded_queue
+else:
+    _queue_spec = importlib.util.spec_from_file_location(
+        "_cwc_issue_queue", _queue_path
+    )
+    if _queue_spec is None or _queue_spec.loader is None:
+        raise ImportError("could not load local issue queue module")
+    _issue_queue = importlib.util.module_from_spec(_queue_spec)
+    _queue_spec.loader.exec_module(_issue_queue)
+enqueue = _issue_queue.enqueue
+is_issue_assigned_to_allowed = _issue_queue.is_issue_assigned_to_allowed
+_assignee_logins = _issue_queue._assignee_logins
+allowed_assignees = _issue_queue.allowed_assignees
+visible_unassigned_repos = _issue_queue.visible_unassigned_repos
 from eligibility import repo_diagnostics, evaluate_item
 from events import init_db, log_event, query_events, get_stats, get_decompose_tree
 from agent_traces import get_agent_trace_payload, ensure_trace_bundle, upsert_trace
@@ -60,7 +83,11 @@ from portfolio import (
     load_portfolio,
     outcome_contract_for_repo,
 )
-from outcome_traces import OutcomeTraceError, load_funnel as load_outcome_funnel
+from outcome_traces import (
+    OutcomeTraceError,
+    load_funnel as load_outcome_funnel,
+    validate_client_slug,
+)
 from context_audit_reports import load_context_audit
 from decomposition import queue_lock as decomposition_queue_lock
 from decomposition import save_queue as save_decomposition_queue
@@ -364,6 +391,13 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         if content_length < 0:
             self._json_response({"error": "Invalid Content-Length"}, 400)
             return
+        if path == "/api/outcome-funnel":
+            self.send_response(405)
+            self.send_header("Allow", "GET")
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"Method not allowed","read_only":true}')
+            return
         if path == "/api/heartbeat" and content_length > 4096:
             self._json_response({"error": "heartbeat body too large"}, 413)
             return
@@ -531,7 +565,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     pr_url = pr_r.stdout.strip()
                     actions_taken.append(f"Created PR: {pr_url}")
                     # Update item with PR number
-                    from queue import load_queue as _lq, save_queue as _sq
+                    _lq, _sq = _issue_queue.load_queue, _issue_queue.save_queue
                     q = _lq()
                     for lst in ("completed", "failed", "in_progress"):
                         for i in q.get(lst, []):
@@ -614,8 +648,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 self._json_response({"error": "item_id and prompt_id required"}, 400)
                 return
             # Look up item details from queue (search all lists for re-dispatch)
-            from queue import load_queue
-            queue = load_queue()
+            queue = _issue_queue.load_queue()
             item = None
             source_list_name = None
             for lst_name in ("pending", "in_progress", "completed", "failed"):
@@ -921,11 +954,34 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 return
             self._json_response(outcome)
         elif path == "/api/outcome-funnel":
-            params = parse_qs(urlparse(self.path).query)
-            client_slug = params.get("client", [None])[0]
+            query = urlparse(self.path).query
             try:
-                self._json_response(load_outcome_funnel(client_slug=client_slug))
-            except (OutcomeTraceError, json.JSONDecodeError) as exc:
+                if len(query) > 128:
+                    raise OutcomeTraceError("outcome filter is too long")
+                params = parse_qs(
+                    query, keep_blank_values=True, max_num_fields=2
+                )
+                if set(params) - {"client"} or len(params.get("client", [])) > 1:
+                    raise OutcomeTraceError("only one client filter is allowed")
+                client_slug = params.get("client", [None])[0]
+                if client_slug is not None:
+                    validate_client_slug(client_slug)
+            except (OutcomeTraceError, ValueError) as exc:
+                self._json_response(
+                    {"error": "invalid outcome filter", "detail": str(exc)}, 400
+                )
+                return
+            try:
+                portfolio = load_portfolio()
+                projects_by_id = {
+                    project["id"]: project for project in portfolio["projects"]
+                }
+                self._json_response(
+                    load_outcome_funnel(
+                        client_slug=client_slug, projects_by_id=projects_by_id
+                    )
+                )
+            except (OutcomeTraceError, PortfolioError, json.JSONDecodeError) as exc:
                 self._json_response(
                     {
                         "error": "outcome funnel unavailable",
@@ -1158,7 +1214,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
 
             # Auto-complete: if agent exited and item still in_progress, move to completed/failed
             if result["status"] == "exited" and source_list_name == "in_progress" and liveness_reliable:
-                from queue import load_queue as _lq, save_queue as _sq
+                _lq, _sq = _issue_queue.load_queue, _issue_queue.save_queue
                 q = _lq()
                 for i in q["in_progress"]:
                     if i["id"] == item_id:
@@ -1186,21 +1242,18 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             issue_number = item.get("issue_number")
             if repo and issue_number:
                 try:
-                    from queue import check_linked_prs
-                    prs = check_linked_prs(repo, issue_number)
+                    prs = _issue_queue.check_linked_prs(repo, issue_number)
                     result["linked_prs"] = prs or []
                 except Exception:
                     pass
             self._json_response(result)
         elif path == "/api/sync":
             repo_filter = self._parse_qs().get("repo")
-            from queue import sync_github_issues
-            results = sync_github_issues(repo_filter)
+            results = _issue_queue.sync_github_issues(repo_filter)
             self._json_response(results)
         elif path == "/api/health":
-            from queue import load_queue
             from events import load_decompose_queue
-            q = load_queue()
+            q = _issue_queue.load_queue()
             dq = load_decompose_queue()
             stale = _pool_mgr.reap_stale()
             self._json_response({
@@ -1463,7 +1516,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         The Hermes gateway spawns the agent with proper toolset injection,
         model config, yolo mode, and session management.
         """
-        from queue import load_queue, save_queue
+        load_queue, save_queue = _issue_queue.load_queue, _issue_queue.save_queue
         model_provider, model_name = normalize_dispatch_model(model_provider, model_name)
 
         # Claim the item (move to in_progress)
@@ -1761,6 +1814,13 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         """Handle prioritization: PATCH /api/queue/prioritize/<id> or PATCH /api/queue/move-down/<id>"""
         path = unquote(self.path.split("?")[0])
+        if path == "/api/outcome-funnel":
+            self.send_response(405)
+            self.send_header("Allow", "GET")
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"Method not allowed","read_only":true}')
+            return
         try:
             content_length = int(self.headers.get("Content-Length", 0))
         except (TypeError, ValueError):
@@ -1781,23 +1841,19 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/queue/prioritize/"):
             item_id = path[len("/api/queue/prioritize/"):]
-            from queue import prioritize_top
-            ok = prioritize_top(item_id)
+            ok = _issue_queue.prioritize_top(item_id)
             self._json_response({"ok": ok, "item_id": item_id, "action": "prioritize_top"})
         elif path.startswith("/api/queue/move-down/"):
             item_id = path[len("/api/queue/move-down/"):]
-            from queue import move_down
-            ok = move_down(item_id)
+            ok = _issue_queue.move_down(item_id)
             self._json_response({"ok": ok, "item_id": item_id, "action": "move_down"})
         elif path.startswith("/api/queue/move-to-bottom/"):
             item_id = path[len("/api/queue/move-to-bottom/"):]
-            from queue import move_to_bottom
-            ok = move_to_bottom(item_id)
+            ok = _issue_queue.move_to_bottom(item_id)
             self._json_response({"ok": ok, "item_id": item_id, "action": "move_to_bottom"})
         elif path.startswith("/api/queue/retry/"):
             item_id = path[len("/api/queue/retry/"):]
-            from queue import retry
-            ok = retry(item_id)
+            ok = _issue_queue.retry(item_id)
             self._json_response({"ok": ok, "item_id": item_id, "action": "retry"})
         elif path.startswith("/api/queue/remove/"):
             item_id = path[len("/api/queue/remove/"):]
@@ -1813,8 +1869,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             ):
                 self._json_response({"error": "Invalid recovery request"}, 400)
                 return
-            from queue import recover_item
-            result = recover_item(
+            result = _issue_queue.recover_item(
                 item_id,
                 requeue=payload.get("requeue") is True,
                 dry_run=payload.get("dry_run") is True,

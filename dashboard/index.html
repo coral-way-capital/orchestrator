@@ -2360,11 +2360,20 @@ const OUTCOME_STAGE_LABELS = {
   accepted: 'Accepted',
 };
 
-function OutcomeFunnelView({ outcomes, loading, error }) {
+function OutcomeFunnelView({ outcomes, portfolio, loading, error }) {
   if (loading) return html`<div class="portfolio-empty">Loading accepted-outcome traces...</div>`;
   if (error) return html`<div class="portfolio-empty">Outcome funnel unavailable: ${error}</div>`;
+  if (!outcomes?.available) return html`
+    <div class="portfolio-empty">
+      <strong>Trace source unavailable.</strong>
+      No accepted-unit count can be inferred until a canonical references-only trace source is configured.
+    </div>
+  `;
   const traces = outcomes?.traces || [];
   const funnel = outcomes?.funnel || {};
+  const projectsById = Object.fromEntries(
+    (portfolio?.projects || []).map(project => [project.id, project])
+  );
   return html`
     <div class="portfolio-view">
       <section class="portfolio-hero">
@@ -2389,14 +2398,16 @@ function OutcomeFunnelView({ outcomes, loading, error }) {
           <article class="outcome-trace">
             <div class="outcome-trace-head">
               <div>
-                <div class="portfolio-label">${trace.client_slug} · ${trace.outcome_contract?.project_id}</div>
-                <div class="evidence-title">${trace.outcome_contract?.outcome_unit}</div>
+                <div class="portfolio-label">${trace.client_slug} · ${trace.project_contract?.project_id} · contract v${trace.project_contract?.version}</div>
+                <div class="evidence-title">${projectsById[trace.project_contract?.project_id]?.outcome_unit || 'Outcome unit unavailable from canonical portfolio'}</div>
               </div>
               <span class="portfolio-chip ${trace.acceptance?.status === 'accepted' ? 'verified' : 'unverified'}">${trace.acceptance?.status || 'unknown'}</span>
             </div>
             <div class="outcome-reference">Evidence reference: ${trace.acceptance?.evidence_source?.reference || 'not available'}</div>
             <div class="outcome-reference">Provenance: ${trace.acceptance?.provenance?.system || 'not available'} · ${trace.acceptance?.provenance?.record_reference || 'not available'}</div>
             <div class="outcome-reference">Reviewer: ${trace.acceptance?.reviewer?.reference || 'not available'} · observed ${trace.acceptance?.observed_at || 'not available'} · accepted ${trace.acceptance?.accepted_at || 'not available'}</div>
+            <div class="outcome-reference">Merged at: ${trace.stages?.merged?.occurred_at || 'not available'}</div>
+            <div class="outcome-reference">Accepted at: ${trace.stages?.accepted?.occurred_at || 'not available'} · status ${trace.acceptance?.status || 'unknown'}</div>
           </article>
         `) : html`<div class="portfolio-empty">No acceptance traces are instrumented. This does not imply zero accepted units.</div>`}
       </section>
@@ -3597,7 +3608,7 @@ function App() {
         <${PortfolioView} portfolio=${portfolio.data} loading=${portfolio.loading} error=${portfolio.error} />
       `}
       ${tab === 'outcomes' && html`
-        <${OutcomeFunnelView} outcomes=${outcomes.data} loading=${outcomes.loading} error=${outcomes.error} />
+        <${OutcomeFunnelView} outcomes=${outcomes.data} portfolio=${portfolio.data} loading=${outcomes.loading} error=${outcomes.error} />
       `}
       ${tab === 'context-audit' && html`
         <${ContextAuditView} audit=${contextAudit.data} loading=${contextAudit.loading} error=${contextAudit.error} />

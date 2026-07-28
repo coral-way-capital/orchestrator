@@ -102,6 +102,11 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             raise PortfolioError(f"duplicate project id: {project_id}")
         seen_ids.add(project_id)
 
+        for field in ("outcome_unit", "finish_gate"):
+            value = project[field]
+            if not isinstance(value, str) or not value.strip():
+                raise PortfolioError(f"{project_id}: {field} must be a non-empty string")
+
         evidence_requirement = project["evidence_requirement"]
         if (
             not isinstance(evidence_requirement, list)
@@ -131,7 +136,10 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
                 raise PortfolioError(
                     f"{project_id}: {action} approval must remain required"
                 )
-        if not str(approval_boundary["acceptance_authority"]).strip():
+        if (
+            not isinstance(approval_boundary["acceptance_authority"], str)
+            or not approval_boundary["acceptance_authority"].strip()
+        ):
             raise PortfolioError(f"{project_id}: acceptance_authority is required")
 
         blockers = project["blockers"]
@@ -365,17 +373,12 @@ def get_project(portfolio: dict[str, Any], project_id: str) -> dict[str, Any] | 
 def outcome_contract(project: dict[str, Any]) -> dict[str, Any]:
     """Project the canonical dispatch contract without scorecard or evidence contents."""
     return {
-        "contract_version": 1,
+        "contract_version": 2,
         "project_id": project["id"],
         "outcome_unit": project["outcome_unit"],
         "finish_gate": project["finish_gate"],
         "evidence_requirement": copy.deepcopy(project["evidence_requirement"]),
         "approval_boundary": copy.deepcopy(project["approval_boundary"]),
-        "provenance": {
-            "source": "cwc-control-plane/portfolio/projects.json",
-            "portfolio_version": 2,
-            "project_updated_at": project["updated_at"],
-        },
     }
 
 

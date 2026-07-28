@@ -18,6 +18,8 @@ class OutcomeDashboardTests(unittest.TestCase):
         self.assertIn("function OutcomeFunnelView", self.html)
         self.assertIn("useFetch('/api/outcome-funnel')", self.html)
         self.assertIn("Read-only acceptance evidence", self.html)
+        self.assertIn("trace.project_contract?.project_id", self.html)
+        self.assertNotIn("trace.outcome_contract", self.html)
 
     def test_view_exposes_full_funnel_and_provenance(self):
         for phrase in (
@@ -25,8 +27,18 @@ class OutcomeDashboardTests(unittest.TestCase):
             "Evidence reference",
             "Provenance",
             "Unknown remains unknown",
+            "Merged at:",
+            "Accepted at:",
+            "Trace source unavailable",
         ):
             self.assertIn(phrase, self.html)
+
+    def test_outcome_view_uses_escaped_template_interpolation(self):
+        view = self.html.split("function OutcomeFunnelView", 1)[1].split(
+            "const CONTEXT_SUBSCORE_LABELS", 1
+        )[0]
+        self.assertNotIn("innerHTML", view)
+        self.assertNotIn("dangerouslySetInnerHTML", view)
 
 
 if __name__ == "__main__":
