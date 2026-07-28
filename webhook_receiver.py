@@ -44,6 +44,7 @@ from worker_results import (
     list_results as list_worker_results,
 )
 from portfolio import PortfolioError, build_advice_brief, get_project, load_portfolio
+from context_audit_reports import load_context_audit
 from decomposition import queue_lock as decomposition_queue_lock
 from decomposition import save_queue as save_decomposition_queue
 try:
@@ -834,6 +835,9 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             params = parse_qs(urlparse(self.path).query)
             item_id = params.get("item_id", [None])[0]
             self._json_response({"results": list_worker_results(item_id=item_id)})
+        elif path == "/api/context-audit":
+            context_audit = load_context_audit()
+            self._json_response(context_audit, 200 if context_audit["available"] else 503)
         elif path == "/api/portfolio" or path.startswith("/api/portfolio/"):
             try:
                 portfolio = load_portfolio()

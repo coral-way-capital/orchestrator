@@ -8,6 +8,7 @@ ExecStart=/usr/bin/python3 /home/deploy/.hermes/issue-queue/webhook_receiver.py
 Restart=always
 RestartSec=5
 Environment=PORT=8646
+Environment=CWC_CONTEXT_AUDIT_REPORT_ROOT=/home/deploy/apps/cwc-control-plane/repository-context
 WorkingDirectory=/home/deploy/.hermes/issue-queue
 User=deploy
 

@@ -94,6 +94,8 @@ Your template with {{title}}, {{repo}}, {{local_path}},
 |----------|---------|
 | `PORT` | Server port (default 8646) |
 | `GITHUB_TOKEN` | GitHub PAT for `gh` CLI (used by sync, issue fetch, agent) |
+| `CWC_CONTEXT_AUDIT_REPORT_ROOT` | Read-only control-plane repository-context report root |
+| `CWC_CONTEXT_AUDIT_STALE_DAYS` | Age in days before a context report is marked stale (default 30) |
 
 ## Queue Item Schema
 
@@ -146,6 +148,7 @@ Your template with {{title}}, {{repo}}, {{local_path}},
 | `/api/sync?repo=<repo>` | Incremental sync: add new open issues, prune closed ones. Returns per-repo breakdown |
 | `/api/issue?repo=X&number=N` | Full GitHub issue data + comments |
 | `/api/prompts` | List of available prompt templates |
+| `/api/context-audit` | Redacted read-only projection of the newest canonical repository-context baseline/delta |
 | `/api/health` | Health check with queue counts |
 | `/health` | Simple health check |
 

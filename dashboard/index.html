@@ -965,6 +965,216 @@
     .portfolio-detail-score { text-align: left; }
   }
 
+  /* ═══ Repository Context Audit ═══ */
+  .context-audit-view { animation: fadeSlideIn 0.25s ease both; }
+  .audit-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(240px, 0.5fr);
+    gap: 1rem;
+    padding: 1.6rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--border-accent);
+    border-radius: 16px;
+    background:
+      radial-gradient(circle at 92% 12%, rgba(6,182,212,0.12), transparent 28%),
+      var(--card-bg-accent);
+    box-shadow: var(--shadow-md);
+  }
+  .audit-kicker {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+  }
+  .audit-hero h1 {
+    margin: 0.55rem 0 0.5rem;
+    font-size: clamp(1.6rem, 4vw, 2.35rem);
+    line-height: 1.08;
+    letter-spacing: -0.04em;
+  }
+  .audit-hero p { max-width: 700px; color: var(--text-secondary); font-size: 0.86rem; }
+  .audit-source {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--bg);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    color: var(--text-muted);
+  }
+  .audit-source strong { display: block; margin-top: 0.2rem; color: var(--text); overflow-wrap: anywhere; }
+  .audit-source a { color: var(--accent); text-decoration: none; }
+  .audit-source a:hover { text-decoration: underline; }
+  .audit-state {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.75rem 0.9rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--status-live-border);
+    border-radius: 10px;
+    background: var(--status-live-bg);
+    color: var(--status-live-text);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+  }
+  .audit-state.stale {
+    border-color: rgba(248,113,113,0.35);
+    background: rgba(248,113,113,0.08);
+    color: var(--color-fail);
+  }
+  .audit-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .audit-stat {
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card-bg);
+  }
+  .audit-stat strong { display: block; margin-top: 0.25rem; font-size: 1.65rem; letter-spacing: -0.04em; }
+  .audit-stat small { color: var(--text-muted); font-size: 0.62rem; }
+  .audit-filter-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    padding: 0.8rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--card-bg);
+  }
+  .audit-filter-group { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; }
+  .audit-filter-label {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+  }
+  .audit-filter {
+    padding: 0.38rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.72rem;
+  }
+  .audit-layout {
+    display: grid;
+    grid-template-columns: minmax(235px, 0.58fr) minmax(0, 1.42fr);
+    gap: 1rem;
+    align-items: start;
+  }
+  .audit-findings,
+  .audit-repositories {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card-bg);
+    overflow: hidden;
+  }
+  .audit-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .audit-panel-title {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .audit-count {
+    padding: 0.12rem 0.42rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+  }
+  .audit-finding { padding: 0.8rem 1rem; border-bottom: 1px solid var(--border-light); }
+  .audit-finding:last-child { border-bottom: 0; }
+  .audit-finding strong { display: block; font-size: 0.74rem; overflow-wrap: anywhere; }
+  .audit-finding-meta { margin: 0.25rem 0 0.4rem; color: var(--color-fail); font-size: 0.65rem; }
+  .audit-repo { padding: 1rem; border-bottom: 1px solid var(--border); }
+  .audit-repo:last-child { border-bottom: 0; }
+  .audit-repo-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 1rem;
+  }
+  .audit-repo h2 { font-size: 0.9rem; overflow-wrap: anywhere; }
+  .audit-revision { margin-top: 0.18rem; color: var(--text-muted); font-family: var(--font-mono); font-size: 0.58rem; }
+  .audit-score { font-size: 1.6rem; font-weight: 700; line-height: 1; text-align: right; }
+  .audit-score small { display: block; margin-top: 0.2rem; color: var(--text-muted); font-size: 0.58rem; font-weight: 400; }
+  .audit-score .drop { color: var(--color-fail); }
+  .audit-score .gain { color: var(--color-done); }
+  .audit-subscore-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(54px, 1fr));
+    gap: 0.4rem;
+    margin: 0.85rem 0;
+  }
+  .audit-subscore {
+    min-width: 0;
+    padding: 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+  }
+  .audit-subscore span { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); font-size: 0.54rem; }
+  .audit-subscore strong { display: block; margin-top: 0.18rem; font-family: var(--font-mono); font-size: 0.7rem; }
+  .audit-evidence { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+  .audit-evidence a {
+    max-width: 100%;
+    padding: 0.2rem 0.42rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.56rem;
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .audit-evidence a:hover { border-color: var(--border-accent-strong); }
+  .audit-empty {
+    padding: 4rem 1rem;
+    border: 1px dashed var(--border);
+    border-radius: 14px;
+    text-align: center;
+    color: var(--text-muted);
+  }
+  .audit-empty strong { display: block; margin-bottom: 0.35rem; color: var(--text); }
+  @media (max-width: 900px) {
+    .audit-layout, .audit-hero { grid-template-columns: 1fr; }
+    .audit-stats { grid-template-columns: 1fr 1fr; }
+    .audit-subscore-grid { grid-template-columns: repeat(4, minmax(60px, 1fr)); }
+  }
+  @media (max-width: 560px) {
+    .audit-stats { grid-template-columns: 1fr 1fr; }
+    .audit-subscore-grid { grid-template-columns: repeat(2, minmax(80px, 1fr)); }
+    .audit-state { align-items: flex-start; flex-direction: column; }
+  }
+
   /* ═══ Responsive ═══ */
   @media (max-width: 768px) {
     .metrics-grid { grid-template-columns: 1fr; }
@@ -1500,6 +1710,7 @@ const POLL_MS = 5000;
 
 const TABS = [
   { id: 'portfolio', label: 'Portfolio', icon: '\u25C8' },
+  { id: 'context-audit', label: 'Context audit', icon: '\u25CE' },
   { id: 'kanban', label: 'Kanban', icon: '\u25A3' },
   { id: 'agents', label: 'Live Agents', icon: '\u25B6' },
   { id: 'activity', label: 'Activity', icon: '\u26A1' },
@@ -2125,6 +2336,185 @@ function PortfolioView({ portfolio, loading, error }) {
               </div>
             `)}
           </div>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+const CONTEXT_SUBSCORE_LABELS = {
+  instructions: 'Instructions',
+  duplication: 'Duplication',
+  contradictions: 'Contradictions',
+  references: 'References',
+  discoverability: 'Discoverability',
+  ci: 'CI',
+  ownership: 'Ownership',
+};
+
+function EvidenceLinks({ evidence }) {
+  return html`
+    <div class="audit-evidence" aria-label="Evidence">
+      ${(evidence || []).map(reference => html`
+        <a href=${reference.url} target="_blank" rel="noopener noreferrer" title=${reference.path}>
+          ${reference.label} \u2197
+        </a>
+      `)}
+    </div>
+  `;
+}
+
+function ContextAuditView({ audit, loading, error }) {
+  const [scoreFilter, setScoreFilter] = useState('all');
+  const [dropFilter, setDropFilter] = useState('all');
+
+  if (loading) return html`<div class="audit-empty">Loading versioned audit evidence...</div>`;
+  if (error || !audit?.available) {
+    return html`
+      <div class="audit-empty">
+        <strong>Audit reports unavailable</strong>
+        Mission Control cannot read a valid canonical report from the configured root. Queue operations are unaffected.
+      </div>
+    `;
+  }
+
+  const repositories = (audit.repositories || []).filter(repository => {
+    const scoreMatches =
+      scoreFilter === 'all' ||
+      (scoreFilter === 'below60' && repository.score < 60) ||
+      (scoreFilter === '60to79' && repository.score >= 60 && repository.score < 80) ||
+      (scoreFilter === '80plus' && repository.score >= 80);
+    const dropMatches =
+      dropFilter === 'all' ||
+      (dropFilter === 'dropped' && repository.change < 0) ||
+      (dropFilter === 'drop10' && repository.change < -10) ||
+      (dropFilter === 'improved' && repository.change > 0) ||
+      (dropFilter === 'unchanged' && repository.change === 0);
+    return scoreMatches && dropMatches;
+  });
+  const summary = audit.summary || {};
+  const delta = audit.delta || {};
+
+  return html`
+    <div class="context-audit-view">
+      <section class="audit-hero">
+        <div>
+          <div class="audit-kicker">Repository context / Read-only evidence</div>
+          <h1>Repository context coverage</h1>
+          <p>Versioned baseline and delta evidence from the control plane. Mission Control displays scores and immutable references; it does not scan, rewrite, or remediate repositories.</p>
+        </div>
+        <div class="audit-source">
+          <div>
+            Source observed
+            <strong>${audit.observed_at} · ${audit.report_kind.toUpperCase()}</strong>
+          </div>
+          <div>
+            Inventory revision
+            <strong>${audit.inventory_revision}</strong>
+          </div>
+          <a href=${audit.source?.url} target="_blank" rel="noopener noreferrer">Open versioned inventory \u2197</a>
+        </div>
+      </section>
+
+      <div class="audit-state ${audit.stale ? 'stale' : ''}">
+        <span>${audit.stale ? 'REPORT STALE' : 'REPORT CURRENT'} · ${audit.age_days} day${audit.age_days === 1 ? '' : 's'} old</span>
+        <span>Read-only evidence · stale after ${audit.stale_after_days} days</span>
+      </div>
+
+      <div class="audit-stats">
+        <div class="audit-stat">
+          <div class="audit-panel-title">Overall coverage</div>
+          <strong>${summary.coverage_percent || 0}%</strong>
+          <small>${summary.passing_repositories || 0}/${summary.repository_count || 0} repositories score 60+</small>
+        </div>
+        <div class="audit-stat">
+          <div class="audit-panel-title">Average score</div>
+          <strong>${summary.average_score || 0}</strong>
+          <small>Portfolio mean / 100</small>
+        </div>
+        <div class="audit-stat">
+          <div class="audit-panel-title">Threshold findings</div>
+          <strong>${summary.threshold_findings || 0}</strong>
+          <small>Score below 60 or drop above 10</small>
+        </div>
+        <div class="audit-stat">
+          <div class="audit-panel-title">Delta movement</div>
+          <strong>${delta.improved || 0}\u2191 ${delta.declined || 0}\u2193</strong>
+          <small>Largest drop ${delta.largest_drop ?? '\u2014'}</small>
+        </div>
+      </div>
+
+      <div class="audit-filter-row">
+        <div class="audit-filter-group">
+          <label class="audit-filter-label" for="audit-score-filter">Score filter</label>
+          <select id="audit-score-filter" class="audit-filter" value=${scoreFilter} onChange=${event => setScoreFilter(event.target.value)}>
+            <option value="all">All scores</option>
+            <option value="below60">Below 60</option>
+            <option value="60to79">60\u201379</option>
+            <option value="80plus">80+</option>
+          </select>
+          <label class="audit-filter-label" for="audit-drop-filter">Drop filter</label>
+          <select id="audit-drop-filter" class="audit-filter" value=${dropFilter} onChange=${event => setDropFilter(event.target.value)}>
+            <option value="all">All changes</option>
+            <option value="drop10">Drop over 10</option>
+            <option value="dropped">Any drop</option>
+            <option value="improved">Improved</option>
+            <option value="unchanged">Unchanged</option>
+          </select>
+        </div>
+        <span class="audit-panel-title">${repositories.length} of ${summary.repository_count || 0} shown</span>
+      </div>
+
+      <div class="audit-layout">
+        <aside class="audit-findings">
+          <div class="audit-panel-header">
+            <div class="audit-panel-title">Threshold findings</div>
+            <span class="audit-count">${(audit.findings || []).length}</span>
+          </div>
+          ${(audit.findings || []).length ? audit.findings.map(finding => html`
+            <div class="audit-finding">
+              <strong>${finding.repository}</strong>
+              <div class="audit-finding-meta">
+                ${finding.reason === 'score_drop' ? `Score drop: ${finding.baseline_score} \u2192 ${finding.score}` : `Score ${finding.score} is below 60`}
+              </div>
+              <${EvidenceLinks} evidence=${finding.evidence} />
+            </div>
+          `) : html`<div class="audit-finding"><div class="audit-finding-meta">No threshold findings.</div></div>`}
+        </aside>
+
+        <section class="audit-repositories" aria-label="Repository audit scores">
+          <div class="audit-panel-header">
+            <div class="audit-panel-title">Repository scores · Subscores · Evidence</div>
+            <span class="audit-count">${repositories.length}</span>
+          </div>
+          ${repositories.length ? repositories.map(repository => html`
+            <article class="audit-repo">
+              <div class="audit-repo-head">
+                <div>
+                  <h2>${repository.name}</h2>
+                  <div class="audit-revision">source ${repository.source_revision}</div>
+                </div>
+                <div class="audit-score">
+                  ${repository.score}
+                  <small>
+                    /100
+                    ${repository.change !== null && repository.change !== undefined
+                      ? html` · <span class=${repository.change < 0 ? 'drop' : repository.change > 0 ? 'gain' : ''}>${repository.change > 0 ? '+' : ''}${repository.change}</span>`
+                      : ''}
+                  </small>
+                </div>
+              </div>
+              <div class="audit-subscore-grid" aria-label="Subscores">
+                ${Object.entries(repository.subscores || {}).map(([name, score]) => html`
+                  <div class="audit-subscore" title=${CONTEXT_SUBSCORE_LABELS[name] || name}>
+                    <span>${CONTEXT_SUBSCORE_LABELS[name] || name}</span>
+                    <strong>${score}</strong>
+                  </div>
+                `)}
+              </div>
+              <${EvidenceLinks} evidence=${repository.evidence} />
+            </article>
+          `) : html`<div class="audit-empty">No repositories match the selected score and drop filters.</div>`}
         </section>
       </div>
     </div>
@@ -2876,6 +3266,7 @@ function App() {
 
   const queue = useFetch('/api/queue');
   const portfolio = useFetch('/api/portfolio');
+  const contextAudit = useFetch('/api/context-audit');
 
   // Deep linking: open issue from URL hash (#issue=repo/owner#123)
   useEffect(() => {
@@ -2934,6 +3325,7 @@ function App() {
 
   const counts = {
     portfolio: portfolio.data?.projects?.length || 0,
+    'context-audit': contextAudit.data?.summary?.threshold_findings || 0,
     kanban: (filteredQueue?.pending?.length || 0) + (filteredQueue?.in_progress?.length || 0) + (filteredQueue?.failed?.length || 0),
     agents: health.data?.worker_pools?.active_workers || 0,
     activity: events.data?.length || 0,
@@ -3135,10 +3527,13 @@ function App() {
     <${Header} queue=${queue.data} />
     <${TabBar} active=${tab} onSwitch=${setTab} counts=${counts} />
     <div class="content">
-      ${tab !== 'portfolio' && html`<${StatsBar} queue=${queue.data} stats=${stats.data} />`}
-      ${tab !== 'portfolio' && html`<${RepoEligibilityAlerts} diagnostics=${diagnostics.data} repoFilter=${repoFilter} />`}
+      ${tab !== 'portfolio' && tab !== 'context-audit' && html`<${StatsBar} queue=${queue.data} stats=${stats.data} />`}
+      ${tab !== 'portfolio' && tab !== 'context-audit' && html`<${RepoEligibilityAlerts} diagnostics=${diagnostics.data} repoFilter=${repoFilter} />`}
       ${tab === 'portfolio' && html`
         <${PortfolioView} portfolio=${portfolio.data} loading=${portfolio.loading} error=${portfolio.error} />
+      `}
+      ${tab === 'context-audit' && html`
+        <${ContextAuditView} audit=${contextAudit.data} loading=${contextAudit.loading} error=${contextAudit.error} />
       `}
       ${tab === 'kanban' && html`
         <div class="filter-bar">
