@@ -103,8 +103,7 @@ subscriptions:
       by issue webhook receiver)
     events:
     - issues
-    skills:
-    - github-issues
+    skills: []
     deliver: discord
     deliver_extra:
       chat_id: '1468240937833467971'

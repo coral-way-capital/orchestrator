@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "cohort": "historical audit reported 2026-07-27",
+  "failed_count": 50,
+  "completed_count": 14,
+  "historical_failure_rate": 0.78125,
+  "evidence_status": "not_available_in_repository",
+  "categories": {
+    "unknown": 50
+  },
+  "finding": "The repository contains the aggregate audit counts but no sanitized per-failure evidence. All 50 failures therefore remain unknown; assigning more specific causes would fabricate evidence.",
+  "next_action": "Export sanitized failure records and run: python3 decomposition.py rca records.json --completed-count 14",
+  "secrets_policy": "Only sanitized error summaries are accepted; tokens and credential-like values are redacted."
+}
