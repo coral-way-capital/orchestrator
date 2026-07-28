@@ -537,7 +537,13 @@ def ingest_pull_snapshot(
                 event_key=f"review:{review_id}:{event_type}",
                 actor=actor,
                 source=source,
-                payload={"review_id": review_id, "state": review.get("state")},
+                payload={
+                    "review_id": review_id,
+                    "state": review.get("state"),
+                    "body": review.get("body"),
+                    "html_url": review.get("html_url"),
+                    "commit_id": review.get("commit_id"),
+                },
             ):
                 inserted.append((event_type, submitted_at))
 
@@ -698,6 +704,38 @@ def get_pull_request(
         result["opened_at"], result["merged_at"]
     )
     return result
+
+
+def list_pull_events(
+    repo: str,
+    pr_number: int,
+    *,
+    db_path: Path | str = OUTCOMES_DB,
+) -> list[dict[str, Any]]:
+    """Return stable, provenance-preserving events for one tracked PR."""
+    repo = _validate_repo(repo)
+    pr_number = _validate_pr_number(pr_number)
+    with get_db(db_path) as db:
+        rows = db.execute(
+            """
+            SELECT event_type, event_at, event_key, github_actor, source,
+                   payload_json
+            FROM pr_outcome_events
+            WHERE repo = ? AND pr_number = ?
+            ORDER BY event_at, id
+            """,
+            (repo, pr_number),
+        ).fetchall()
+    events = []
+    for row in rows:
+        event = dict(row)
+        try:
+            event["payload"] = json.loads(event.pop("payload_json") or "{}")
+        except json.JSONDecodeError:
+            event["payload"] = {}
+            event["payload_availability"] = "not_available"
+        events.append(event)
+    return events
 
 
 def build_report(*, db_path: Path | str = OUTCOMES_DB) -> dict[str, Any]:

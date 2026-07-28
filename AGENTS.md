@@ -45,6 +45,7 @@ A dashboard and orchestration layer for GitHub issues owned by [Coral Way Capita
 | `orchestrator_check.py` | Cron script. Reads queue, determines which issues to dispatch, outputs context for agents. Max 2 concurrent workers, 1 per repo. |
 | `liveness.py` | Worker liveness classification (live/stale/dead) and safe stale-worker reaping. Two-signal model: heartbeat staleness + process check. Idempotent, audited, preserves recovery manifest. |
 | `pr_outcomes.py` | Idempotent PR engineering-state ledger, exact GitHub cycle times, conversion report, and restart-safe rolling 30-day backfill. |
+| `worker_evaluations.py` | Idempotent terminal-PR evaluation registry, weekly failure digest, and recommendation-only routing approval guard. |
 | `dashboard/index.html` | Single-file Preact SPA. Kanban board with clickable cards, issue detail modal, agent dispatch with prompt selector, activity timeline, metrics, guards, decompose tree. Dark/light mode. |
 | `prompts/` | Prompt template directory. Each `.md` file is a template with YAML frontmatter and `{{variable}}` placeholders. Drop new files to add prompt options. |
 | `cwc-issue-webhook.service` | systemd unit file for the webhook receiver. |
