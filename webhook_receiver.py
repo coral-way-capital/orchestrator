@@ -53,7 +53,14 @@ from pr_outcomes import (
     get_pull_request as get_pr_outcome,
     ingest_webhook as ingest_pr_webhook,
 )
-from portfolio import PortfolioError, build_advice_brief, get_project, load_portfolio
+from portfolio import (
+    PortfolioError,
+    build_advice_brief,
+    get_project,
+    load_portfolio,
+    outcome_contract_for_repo,
+)
+from outcome_traces import OutcomeTraceError, load_funnel as load_outcome_funnel
 from context_audit_reports import load_context_audit
 from decomposition import queue_lock as decomposition_queue_lock
 from decomposition import save_queue as save_decomposition_queue
@@ -913,6 +920,22 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 self._json_response({"error": "PR outcome not found"}, 404)
                 return
             self._json_response(outcome)
+        elif path == "/api/outcome-funnel":
+            params = parse_qs(urlparse(self.path).query)
+            client_slug = params.get("client", [None])[0]
+            try:
+                self._json_response(load_outcome_funnel(client_slug=client_slug))
+            except (OutcomeTraceError, json.JSONDecodeError) as exc:
+                self._json_response(
+                    {
+                        "error": "outcome funnel unavailable",
+                        "detail": str(exc),
+                        "read_only": True,
+                        "traces": [],
+                    },
+                    503,
+                )
+            return
         elif path == "/api/portfolio" or path.startswith("/api/portfolio/"):
             try:
                 portfolio = load_portfolio()
@@ -1458,6 +1481,16 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         if not item:
             return {"error": f"Item {item_id} not found"}, 404
 
+        try:
+            canonical_outcome_contract = outcome_contract_for_repo(repo)
+        except PortfolioError as exc:
+            return {
+                "error": "Outcome contract unavailable; dispatch not sent",
+                "detail": str(exc),
+            }, 503
+        if canonical_outcome_contract:
+            item["outcome_contract"] = canonical_outcome_contract
+
         # If in_progress, check if agent is still alive
         if source_list == "in_progress" and item.get("agent_pid"):
             try:
@@ -1522,6 +1555,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             "model_provider": model_provider,
             "model": model_name,
             "chain_pr_guardian": True,
+            "outcome_contract": item.get("outcome_contract"),
         }
 
         payload_bytes = json.dumps(payload).encode()
@@ -1601,6 +1635,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 "model_provider": model_provider,
                 "model": model_name,
                 "prompt_id": prompt_id,
+                "outcome_contract": item.get("outcome_contract"),
                 "gateway_response": gateway_response,
                 "telemetry": telemetry,
                 "started_at": started_at,
@@ -1685,7 +1720,9 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                                "status_url": telemetry.get("status_url"),
                                "status_path": telemetry.get("status_path"),
                                "telemetry_missing": telemetry.get("telemetry_missing", []),
-                               "liveness_reliable": telemetry.get("liveness_reliable", False)})
+                               "liveness_reliable": telemetry.get("liveness_reliable", False),
+                               "project_id": (item.get("outcome_contract") or {}).get("project_id"),
+                               "outcome_contract_version": (item.get("outcome_contract") or {}).get("contract_version")})
 
             return {
                 "ok": True,
@@ -1706,6 +1743,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 "session_path": telemetry.get("session_path"),
                 "telemetry_missing": telemetry.get("telemetry_missing", []),
                 "liveness_reliable": telemetry.get("liveness_reliable", False),
+                "outcome_contract": item.get("outcome_contract"),
             }, 202
 
         except Exception as e:

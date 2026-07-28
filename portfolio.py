@@ -49,8 +49,8 @@ def _parse_date(value: str | None, field: str) -> date | None:
 
 def validate_manifest(manifest: dict[str, Any]) -> None:
     """Validate the score policy and all project records."""
-    if manifest.get("version") != 1:
-        raise PortfolioError("manifest version must be 1")
+    if manifest.get("version") != 2:
+        raise PortfolioError("manifest version must be 2")
 
     policy = manifest.get("policy")
     if not isinstance(policy, dict):
@@ -82,6 +82,8 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         "wip_class",
         "outcome_unit",
         "finish_gate",
+        "evidence_requirement",
+        "approval_boundary",
         "dimensions",
         "blockers",
         "evidence",
@@ -99,6 +101,38 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         if project_id in seen_ids:
             raise PortfolioError(f"duplicate project id: {project_id}")
         seen_ids.add(project_id)
+
+        evidence_requirement = project["evidence_requirement"]
+        if (
+            not isinstance(evidence_requirement, list)
+            or not evidence_requirement
+            or any(
+                not isinstance(requirement, str) or not requirement.strip()
+                for requirement in evidence_requirement
+            )
+        ):
+            raise PortfolioError(
+                f"{project_id}: evidence_requirement must contain references"
+            )
+        approval_boundary = project["approval_boundary"]
+        required_boundary = {
+            "production",
+            "spending",
+            "client_communication",
+            "acceptance_authority",
+        }
+        if (
+            not isinstance(approval_boundary, dict)
+            or set(approval_boundary) != required_boundary
+        ):
+            raise PortfolioError(f"{project_id}: approval_boundary is incomplete")
+        for action in ("production", "spending", "client_communication"):
+            if approval_boundary[action] != "required":
+                raise PortfolioError(
+                    f"{project_id}: {action} approval must remain required"
+                )
+        if not str(approval_boundary["acceptance_authority"]).strip():
+            raise PortfolioError(f"{project_id}: acceptance_authority is required")
 
         blockers = project["blockers"]
         if not isinstance(blockers, list):
@@ -326,3 +360,33 @@ def load_portfolio(path: str | os.PathLike[str] | None = None) -> dict[str, Any]
 
 def get_project(portfolio: dict[str, Any], project_id: str) -> dict[str, Any] | None:
     return next((item for item in portfolio.get("projects", []) if item.get("id") == project_id), None)
+
+
+def outcome_contract(project: dict[str, Any]) -> dict[str, Any]:
+    """Project the canonical dispatch contract without scorecard or evidence contents."""
+    return {
+        "contract_version": 1,
+        "project_id": project["id"],
+        "outcome_unit": project["outcome_unit"],
+        "finish_gate": project["finish_gate"],
+        "evidence_requirement": copy.deepcopy(project["evidence_requirement"]),
+        "approval_boundary": copy.deepcopy(project["approval_boundary"]),
+        "provenance": {
+            "source": "cwc-control-plane/portfolio/projects.json",
+            "portfolio_version": 2,
+            "project_updated_at": project["updated_at"],
+        },
+    }
+
+
+def outcome_contract_for_repo(
+    repo: str, path: str | os.PathLike[str] | None = None
+) -> dict[str, Any] | None:
+    """Resolve one client-linked repository to its versioned outcome contract."""
+    manifest = load_manifest(path)
+    matches = [project for project in manifest["projects"] if project.get("repo") == repo]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise PortfolioError(f"{repo}: multiple portfolio projects require explicit routing")
+    return outcome_contract(matches[0])

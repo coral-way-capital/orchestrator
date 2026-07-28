@@ -738,6 +738,19 @@ def get_pull_request(
     result["time_to_merge_seconds"] = _duration_seconds(
         result["opened_at"], result["merged_at"]
     )
+    result["outcome_contract"] = None
+    if result.get("project_id"):
+        try:
+            from portfolio import get_project, load_portfolio, outcome_contract
+
+            project = get_project(load_portfolio(), result["project_id"])
+            if project:
+                result["outcome_contract"] = outcome_contract(project)
+        except Exception:
+            # PR engineering reporting remains available if the read-only
+            # portfolio is unavailable. Missing linkage is explicit, never
+            # interpreted as an acceptance state.
+            pass
     return result
 
 

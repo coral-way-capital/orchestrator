@@ -256,6 +256,23 @@ def enqueue(repo, issue_number, title, body, author, labels, html_url, assignees
     """Add an issue to the pending queue. Skips duplicates, unwanted labels, and non-CWC-assigned work."""
     queue = load_queue()
     item_id = f"{repo}#{issue_number}"
+    outcome_contract = None
+    try:
+        from portfolio import outcome_contract_for_repo
+
+        outcome_contract = outcome_contract_for_repo(repo)
+    except Exception as exc:
+        # Enqueue remains available for non-client repositories when the
+        # read-only portfolio is temporarily unavailable. Dispatch resolves
+        # again and fails closed before sending any client-linked work.
+        log_event(
+            "outcome_contract.unavailable",
+            item_id=item_id,
+            repo=repo,
+            issue_number=issue_number,
+            title=title,
+            details={"phase": "enqueue", "error_type": type(exc).__name__},
+        )
 
     # If already queued, refresh mutable GitHub metadata (especially assignees).
     # Assignment can happen after initial visibility sync; stale [] assignees make
@@ -273,6 +290,7 @@ def enqueue(repo, issue_number, title, body, author, labels, html_url, assignees
                     "labels": labels,
                     "assignees": _assignee_logins(assignees),
                     "html_url": html_url,
+                    "outcome_contract": outcome_contract,
                 }
                 for key, value in updates.items():
                     if existing.get(key) != value:
@@ -330,13 +348,16 @@ def enqueue(repo, issue_number, title, body, author, labels, html_url, assignees
         "completed_at": None,
         "pr_number": None,
         "error": None,
+        "outcome_contract": outcome_contract,
     }
 
     queue["pending"].append(item)
     save_queue(queue)
     log_event("issue.enqueued", item_id=item_id, repo=repo,
               issue_number=issue_number, title=title,
-              details={"author": author, "labels": labels, "assignees": _assignee_logins(assignees)})
+              details={"author": author, "labels": labels, "assignees": _assignee_logins(assignees),
+                       "project_id": (outcome_contract or {}).get("project_id"),
+                       "outcome_contract_version": (outcome_contract or {}).get("contract_version")})
     log_event("issue.visible", item_id=item_id, repo=repo,
               issue_number=issue_number, title=title,
               details={"source": "enqueue", "assignees": _assignee_logins(assignees), "visible_unassigned": repo in visible_unassigned_repos()})
