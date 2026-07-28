@@ -32,6 +32,9 @@ Each item:
 import json
 import sys
 import os
+import copy
+import tempfile
+import fcntl
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -75,8 +78,18 @@ def save_queue(queue):
     # Trim completed list
     if len(queue["completed"]) > MAX_COMPLETED:
         queue["completed"] = queue["completed"][-MAX_COMPLETED:]
-    with open(QUEUE_FILE, "w") as f:
-        json.dump(queue, f, indent=2)
+    fd, temporary = tempfile.mkstemp(prefix=".queue-", dir=QUEUE_FILE.parent)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(queue, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, QUEUE_FILE)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
     # Compatibility ledger: queue.json remains the dashboard source of truth,
     # but every mutation is mirrored into SQLite for transactional dispatch
     # state, priorities, attempts, and telemetry.
@@ -475,22 +488,368 @@ def status():
     return queue
 
 
-def reset(item_id):
-    """Remove item from any queue (for manual cleanup)."""
+def _recovery_manager():
+    """Build a manager for the durable pool colocated with this queue."""
+    from worker_pools import WorkerPoolsManager
+    return WorkerPoolsManager(str(QUEUE_FILE.parent / "worker_pools.json"))
+
+
+def _recovery_manifest(item, source_bucket, worker, classification, now, traces_root):
+    """Persist the complete evidence needed to resume a recovered queue item."""
+    import liveness
+
+    trace_dir = Path(traces_root) / liveness.safe_item_id(item["id"])
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = trace_dir / "queue_recovery.json"
+    branch = worker.get("branch")
+    worktree = worker.get("worktree") or worker.get("local_path")
+    logs = [
+        path for path in (
+            worker.get("log_path"),
+            worker.get("transcript_path"),
+            worker.get("session_path"),
+            worker.get("status_path"),
+            item.get("agent_log"),
+        )
+        if path
+    ]
+    instructions = [
+        f"Inspect preserved logs: {', '.join(logs) if logs else '<none recorded>'}.",
+        f"Inspect preserved worktree {worktree or '<unknown>'} on branch {branch or '<unknown>'}.",
+        (
+            f"Re-dispatch {item['id']} from pending; resume preserved work in "
+            f"{worktree or '<unknown>'} on branch {branch or '<unknown>'}."
+        ),
+    ]
+    manifest = {
+        "recovered_at": now.isoformat(),
+        "queue_identity": {
+            "id": item["id"],
+            "repo": item.get("repo"),
+            "issue_number": item.get("issue_number"),
+            "source_bucket": source_bucket,
+        },
+        "queue_item": copy.deepcopy(item),
+        "worker_id": worker.get("id"),
+        "liveness_state": classification["state"],
+        "liveness_reason": classification["reason"],
+        "branch": branch,
+        "worktree": worktree,
+        "logs": logs,
+        "phase": worker.get("phase") or item.get("phase"),
+        "progress": worker.get("progress"),
+        "recovery_instructions": instructions,
+    }
+    fd, temporary = tempfile.mkstemp(prefix=".queue-recovery-", dir=trace_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            json.dump(manifest, output, indent=2, default=str)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, manifest_path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+    return manifest_path, manifest
+
+
+def recover_item(
+    item_id,
+    *,
+    requeue=False,
+    dry_run=False,
+    pools_manager=None,
+    now=None,
+    process_probe=None,
+    session_probe=None,
+    log_event_fn=None,
+    traces_root=None,
+    _lock_held=False,
+):
+    """Reset an item, optionally requeueing it with preserved recovery state.
+
+    Recovery defaults to refusal whenever worker liveness is uncertain. Every
+    liveness decision reads the pool file again through ``liveness_probe``.
+    Injectable clocks and probes keep acceptance tests deterministic and avoid
+    probing real processes.
+    """
+    import liveness
+
+    now = now or datetime.now(timezone.utc)
+    log_event_fn = log_event_fn or log_event
+    pools_manager = pools_manager or _recovery_manager()
+    traces_root = traces_root or (
+        Path(os.environ.get("CWC_AGENT_TRACES_DIR", QUEUE_FILE.parent / "traces"))
+    )
+
+    # Mutation requests serialize the full queue/pool decision. Dry runs never
+    # create or touch lock files, preserving their zero-mutation contract.
+    if not dry_run and not _lock_held:
+        QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = QUEUE_FILE.parent / ".queue-recovery.lock"
+        with open(lock_path, "a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                return recover_item(
+                    item_id,
+                    requeue=requeue,
+                    dry_run=False,
+                    pools_manager=pools_manager,
+                    now=now,
+                    process_probe=process_probe,
+                    session_probe=session_probe,
+                    log_event_fn=log_event_fn,
+                    traces_root=traces_root,
+                    _lock_held=True,
+                )
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    # Reload the queue for this decision; never make a recovery decision from
+    # a caller-owned or module-level snapshot.
     queue = load_queue()
+    found = None
+    source_bucket = None
     for lst_name in ["pending", "in_progress", "completed", "failed"]:
         for item in queue[lst_name]:
             if item["id"] == item_id:
-                queue[lst_name].remove(item)
-                save_queue(queue)
-                _pool_cleanup(item_id)
-                log_event("issue.reset", item_id=item_id, repo=item.get("repo"),
-                          issue_number=item.get("issue_number"), title=item.get("title"),
-                          details={"from_list": lst_name})
-                print(f"REMOVED: {item_id} from {lst_name}")
-                return True
-    print(f"NOT FOUND: {item_id}")
-    return False
+                found = item
+                source_bucket = lst_name
+                break
+        if found:
+            break
+    if found is None:
+        return {"ok": False, "action": "not_found", "item_id": item_id}
+
+    if requeue and source_bucket == "completed":
+        return {
+            "ok": False,
+            "action": "refused",
+            "item_id": item_id,
+            "reason": "completed items require an explicit new issue",
+            "state": "terminal",
+        }
+
+    # This call reloads worker_pools.json immediately before classification.
+    diagnostics, worker = pools_manager.liveness_probe(
+        item_id=item_id,
+        now=now,
+        process_probe=process_probe or liveness.default_process_probe,
+        session_probe=session_probe,
+    )
+    classification = diagnostics[0] if diagnostics else None
+
+    if worker is not None and (
+        classification is None or classification.get("state") != liveness.DEAD
+    ):
+        return {
+            "ok": False,
+            "action": "refused",
+            "item_id": item_id,
+            "state": (
+                classification.get("state") if classification else liveness.UNKNOWN
+            ),
+            "reason": (
+                classification.get("reason")
+                if classification
+                else "worker liveness could not be classified"
+            ),
+            "phase": worker.get("phase"),
+            "progress": worker.get("progress"),
+        }
+    if worker is None and source_bucket == "in_progress":
+        return {
+            "ok": False,
+            "action": "refused",
+            "item_id": item_id,
+            "state": liveness.UNKNOWN,
+            "reason": "in-progress item has no durable worker record",
+        }
+
+    if not dry_run and worker is not None:
+        # Re-read immediately before mutation. A heartbeat/refresh that raced
+        # the first probe must turn the operation into a refusal.
+        fresh_diagnostics, fresh_worker = pools_manager.liveness_probe(
+            item_id=item_id,
+            now=now,
+            process_probe=process_probe or liveness.default_process_probe,
+            session_probe=session_probe,
+        )
+        fresh_classification = fresh_diagnostics[0] if fresh_diagnostics else None
+        if (
+            fresh_worker is None
+            or fresh_classification is None
+            or fresh_classification.get("state") != liveness.DEAD
+        ):
+            return {
+                "ok": False,
+                "action": "refused",
+                "item_id": item_id,
+                "state": (
+                    fresh_classification.get("state")
+                    if fresh_classification
+                    else liveness.UNKNOWN
+                ),
+                "reason": (
+                    fresh_classification.get("reason")
+                    if fresh_classification
+                    else "durable worker changed during recovery"
+                ),
+            }
+        worker = fresh_worker
+        classification = fresh_classification
+
+    if requeue and source_bucket == "pending":
+        # A prior attempt may have committed queue.json and then failed while
+        # removing the dead worker. Converge that partial state without
+        # duplicating the manifest or audit event.
+        if worker is not None:
+            if not found.get("recovery"):
+                return {
+                    "ok": False,
+                    "action": "refused",
+                    "item_id": item_id,
+                    "state": classification.get("state"),
+                    "reason": "pending item has an unrelated durable worker record",
+                }
+            if dry_run:
+                return {
+                    "ok": True,
+                    "action": "would_finalize_requeue",
+                    "item_id": item_id,
+                    "state": classification.get("state"),
+                }
+            if not pools_manager.remove_worker_if_unchanged(worker):
+                return {
+                    "ok": False,
+                    "action": "refused",
+                    "item_id": item_id,
+                    "state": classification.get("state"),
+                    "reason": "durable worker record changed during recovery",
+                }
+        return {"ok": True, "action": "already_pending", "item_id": item_id}
+
+    if dry_run:
+        return {
+            "ok": True,
+            "action": "would_requeue" if requeue else "would_remove",
+            "item_id": item_id,
+            "from_bucket": source_bucket,
+            "state": classification.get("state") if classification else None,
+        }
+
+    if not requeue and worker is not None:
+        return {
+            "ok": False,
+            "action": "refused",
+            "item_id": item_id,
+            "state": classification.get("state"),
+            "reason": "worker-backed items must use reset --requeue to preserve work",
+        }
+
+    if requeue:
+        manifest_path = None
+        manifest = None
+        if worker is not None:
+            manifest_path, manifest = _recovery_manifest(
+                found, source_bucket, worker, classification, now, traces_root
+            )
+            found["recovery"] = {
+                "manifest": str(manifest_path),
+                "branch": manifest["branch"],
+                "worktree": manifest["worktree"],
+                "logs": manifest["logs"],
+                "phase": manifest["phase"],
+                "progress": manifest["progress"],
+                "instructions": manifest["recovery_instructions"],
+            }
+        found["started_at"] = None
+        found["completed_at"] = None
+        found["error"] = None
+        queue[source_bucket].remove(found)
+        queue["pending"].append(found)
+        details = {
+            "from_list": source_bucket,
+            "recovery_manifest": str(manifest_path) if manifest_path else None,
+            "worker_id": worker.get("id") if worker else None,
+            "liveness": classification,
+        }
+        try:
+            save_queue(queue)
+        except Exception:
+            if manifest_path is not None:
+                try:
+                    manifest_path.unlink()
+                    manifest_path.parent.rmdir()
+                except OSError:
+                    pass
+            raise
+        if worker is not None and not pools_manager.remove_worker_if_unchanged(worker):
+            # The worker changed after the last liveness decision. Restore the
+            # queue item rather than splitting live pool state from its queue
+            # identity. A crash before this point remains recoverable because
+            # the pending item carries the durable manifest.
+            rollback = load_queue()
+            pending_item = next(
+                (item for item in rollback["pending"] if item.get("id") == item_id),
+                None,
+            )
+            if pending_item is not None and pending_item.get("recovery", {}).get(
+                "manifest"
+            ) == str(manifest_path):
+                rollback["pending"].remove(pending_item)
+                original = copy.deepcopy(manifest["queue_item"])
+                rollback[source_bucket].append(original)
+                save_queue(rollback)
+                try:
+                    manifest_path.unlink()
+                    manifest_path.parent.rmdir()
+                except OSError:
+                    pass
+            return {
+                "ok": False,
+                "action": "refused",
+                "item_id": item_id,
+                "state": liveness.UNKNOWN,
+                "reason": "durable worker changed during recovery",
+            }
+        log_event_fn(
+            "issue.requeued",
+            item_id=item_id,
+            repo=found.get("repo"),
+            issue_number=found.get("issue_number"),
+            title=found.get("title"),
+            details=details,
+        )
+        return {
+            "ok": True,
+            "action": "requeued",
+            "item_id": item_id,
+            "recovery_manifest": str(manifest_path) if manifest_path else None,
+        }
+
+    queue[source_bucket].remove(found)
+    save_queue(queue)
+    log_event_fn(
+        "issue.reset",
+        item_id=item_id,
+        repo=found.get("repo"),
+        issue_number=found.get("issue_number"),
+        title=found.get("title"),
+        details={"from_list": source_bucket},
+    )
+    return {"ok": True, "action": "removed", "item_id": item_id}
+
+
+def reset(item_id, *, requeue=False, dry_run=False, **kwargs):
+    """CLI-compatible wrapper for safe reset/requeue decisions."""
+    result = recover_item(
+        item_id, requeue=requeue, dry_run=dry_run, **kwargs
+    )
+    print(json.dumps(result, sort_keys=True))
+    return result["ok"]
 
 
 def prioritize_top(item_id):
@@ -807,8 +1166,24 @@ if __name__ == "__main__":
         item_id = sys.argv[2]
         retry(item_id)
     elif cmd == "reset":
-        item_id = sys.argv[2]
-        reset(item_id)
+        flags = set(sys.argv[2:])
+        positional = [arg for arg in sys.argv[2:] if not arg.startswith("--")]
+        if not positional:
+            print("Usage: queue.py reset <item_id> [--requeue] [--dry-run]")
+            sys.exit(1)
+        item_id = positional[0]
+        known_flags = {"--requeue", "--dry-run"}
+        unknown_flags = {arg for arg in flags if arg.startswith("--")} - known_flags
+        if unknown_flags:
+            print(f"Unknown reset option(s): {', '.join(sorted(unknown_flags))}")
+            sys.exit(1)
+        ok = reset(
+            item_id,
+            requeue="--requeue" in flags,
+            dry_run="--dry-run" in flags,
+        )
+        if not ok:
+            sys.exit(2)
     elif cmd == "prioritize":
         item_id = sys.argv[2]
         prioritize_top(item_id)

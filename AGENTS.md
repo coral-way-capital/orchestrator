@@ -156,7 +156,7 @@ Your template with {{title}}, {{repo}}, {{local_path}},
 | `/api/queue/prioritize/<id>` | Move pending item to top (position 0) |
 | `/api/queue/move-down/<id>` | Move pending item down one position |
 | `/api/queue/move-to-bottom/<id>` | Move pending item to the very end of the queue |
-| `/api/queue/remove/<id>` | Remove item from any queue list |
+| `/api/queue/remove/<id>` | Remove an item, or safely recover with `{"requeue":true}`; add `"dry_run":true` for a zero-mutation preview |
 | `/api/queue/retry/<id>` | Move failed item back to pending |
 
 ### POST
