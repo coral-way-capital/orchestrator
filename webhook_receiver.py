@@ -36,7 +36,11 @@ from eligibility import repo_diagnostics, evaluate_item
 from events import init_db, log_event, query_events, get_stats, get_decompose_tree
 from agent_traces import get_agent_trace_payload, ensure_trace_bundle, upsert_trace
 from worker_pools import WorkerPoolsManager
-from dispatch_telemetry import normalize_dispatch_telemetry
+from dispatch_telemetry import (
+    build_public_completeness_report,
+    normalize_dispatch_telemetry,
+    record_dispatch_start,
+)
 import liveness as worker_liveness
 from worker_results import (
     WorkerResultError,
@@ -870,7 +874,11 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         path = unquote(self.path.split("?")[0])
 
         # API routes
-        if path == "/api/worker-results":
+        if path == "/api/dispatch-telemetry":
+            # Cost values and pricing basis are intentionally internal. This
+            # unauthenticated dashboard API exposes completeness counts only.
+            self._json_response(build_public_completeness_report())
+        elif path == "/api/worker-results":
             params = parse_qs(urlparse(self.path).query)
             item_id = params.get("item_id", [None])[0]
             self._json_response({"results": list_worker_results(item_id=item_id)})
@@ -1642,6 +1650,29 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 )
             if issue_queue_db and current_item:
                 issue_queue_db.record_dispatch(current_item, prompt_id, model_provider, model_name, gateway_response, status="accepted")
+            if dispatch_id:
+                try:
+                    record_dispatch_start(
+                        dispatch_id=dispatch_id,
+                        item_id=item_id,
+                        repo=repo,
+                        task_class=prompt_id,
+                        model_provider=model_provider,
+                        model=model_name,
+                        started_at=started_at,
+                    )
+                except Exception as telemetry_error:
+                    log_event(
+                        "dispatch_telemetry.error",
+                        item_id=item_id,
+                        repo=repo,
+                        issue_number=issue_number,
+                        details={
+                            "dispatch_id": dispatch_id,
+                            "phase": "start",
+                            "error": str(telemetry_error)[:500],
+                        },
+                    )
             log_event("issue.dispatched", item_id=item_id, repo=repo,
                       issue_number=issue_number, title=title,
                       details={"method": "gateway_webhook", "prompt": prompt_id,

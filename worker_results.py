@@ -46,7 +46,9 @@ Status-specific fields:
   infers success and keeps the item queryable for backfill.
 
 Optional fields: ``repo``, ``issue_number``, ``session_id``, ``evidence``
-(free-form dict of URLs, SHAs, log excerpts).
+(free-form dict of URLs, SHAs, log excerpts), and exact ``telemetry``. Telemetry
+accepts provider-response usage, auditable cost, and independently sourced
+accepted-outcome metadata; unsupported values remain ``not_available``.
 
 Idempotency rules
 -----------------
@@ -69,6 +71,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import fcntl
+
+from dispatch_telemetry import normalize_terminal_telemetry, record_terminal_result
 
 WORKER_RESULT_VERSION = 1
 TERMINAL_STATUSES = ("completed", "failed", "unknown")
@@ -235,6 +239,10 @@ def validate_worker_result(payload: dict[str, Any]) -> dict[str, Any]:
         "source": str(payload.get("source") or "worker"),
         "occurred_at": str(occurred_at),
     }
+    try:
+        normalized["telemetry"] = normalize_terminal_telemetry(payload.get("telemetry"))
+    except ValueError as exc:
+        raise WorkerResultError(str(exc)) from exc
 
     if status == "completed":
         pr_number = payload.get("pr_number")
@@ -561,7 +569,8 @@ def apply_outcome_to_queue(result: dict[str, Any], queue: dict[str, Any],
 def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
                          db_path: Path | str = RESULTS_DB,
                          queue_loader=None, queue_saver=None,
-                         event_logger=None) -> dict[str, Any]:
+                         event_logger=None,
+                         telemetry_db_path: Path | str | None = None) -> dict[str, Any]:
     """Validate, persist, and apply a worker-result payload.
 
     Idempotent: duplicate delivery is safe and audited. Returns a dict with::
@@ -622,6 +631,8 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
             db.close()
 
         queue = queue_loader()
+        dispatch_context, _ = _find_in_progress_item(queue, item_id)
+        dispatch_context = dict(dispatch_context or {})
         # A same-outcome redelivery may repair a ledger/queue partial state. A
         # conflicting terminal result never mutates the queue.
         summary = apply_outcome_to_queue(
@@ -641,6 +652,12 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
             trace_item, _ = _find_in_progress_item(queue, item_id)
             if trace_item is not None:
                 _record_terminal_trace(trace_item, result)
+        if not conflict:
+            record_terminal_result(
+                result,
+                dispatch_context=dispatch_context,
+                db_path=telemetry_db_path or db_path,
+            )
 
     if summary.get("applied"):
         try:
