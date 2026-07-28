@@ -234,6 +234,7 @@ def test_aggregations_keep_pr_and_accepted_outcome_separate_and_auditable():
         assert public["dispatch_count"] == 2
         assert public["duration_complete_count"] == 2
         assert public["token_complete_count"] == 1
+        assert public["api_call_complete_count"] == 1
         assert public["cost_complete_count"] == 1
         assert "cost_micros" not in public
         assert "cost_basis" not in public

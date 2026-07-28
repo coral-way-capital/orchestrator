@@ -664,6 +664,9 @@ def build_public_completeness_report(
         "token_complete_count": sum(
             all(row.get(field) is not None for field in TOKEN_FIELDS) for row in rows
         ),
+        "api_call_complete_count": sum(
+            row.get("api_calls") is not None for row in rows
+        ),
         "cost_complete_count": sum(
             row.get("cost_status") == "available"
             and row.get("cost_micros") is not None
