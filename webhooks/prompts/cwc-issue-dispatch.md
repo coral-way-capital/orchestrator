@@ -17,7 +17,7 @@ working, report real progress with:
 
 ```bash
 curl --fail --silent --show-error \
-  -H 'Authorization: Bearer {heartbeat_token}' \\
+  -H 'Authorization: Bearer {heartbeat_token}' \
   -H 'Content-Type: application/json' \
   --data '{"item_id":"{item_id}","phase":"working","progress":0}' \
   '{heartbeat_url}'
