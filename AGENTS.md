@@ -44,6 +44,7 @@ A dashboard and orchestration layer for GitHub issues owned by [Coral Way Capita
 | `events.py` | SQLite event log at `events.db`. Structured log of all events (enqueue, claim, complete, fail, dispatch, sync, guard triggers). Powers metrics, timeline, and stats. |
 | `orchestrator_check.py` | Cron script. Reads queue, determines which issues to dispatch, outputs context for agents. Max 2 concurrent workers, 1 per repo. |
 | `liveness.py` | Worker liveness classification (live/stale/dead) and safe stale-worker reaping. Two-signal model: heartbeat staleness + process check. Idempotent, audited, preserves recovery manifest. |
+| `pr_outcomes.py` | Idempotent PR engineering-state ledger, exact GitHub cycle times, conversion report, and restart-safe rolling 30-day backfill. |
 | `dashboard/index.html` | Single-file Preact SPA. Kanban board with clickable cards, issue detail modal, agent dispatch with prompt selector, activity timeline, metrics, guards, decompose tree. Dark/light mode. |
 | `prompts/` | Prompt template directory. Each `.md` file is a template with YAML frontmatter and `{{variable}}` placeholders. Drop new files to add prompt options. |
 | `cwc-issue-webhook.service` | systemd unit file for the webhook receiver. |
@@ -85,6 +86,7 @@ Your template with {{title}}, {{repo}}, {{local_path}},
 | `~/.hermes/issue-queue/decompose-queue.json` | Epic decomposition queue |
 | `~/.hermes/issue-queue/sync-state.json` | Per-repo sync timestamps (enables incremental sync) |
 | `~/.hermes/issue-queue/events.db` | SQLite event log |
+| `~/.hermes/issue-queue/pr-outcomes.db` | PR state/review ledger and backfill checkpoints |
 | `~/.hermes/issue-queue/webhook-secret` | HMAC secret shared with GitHub |
 | `~/.hermes/issue-queue/prompts/*.md` | Prompt templates (tracked in git) |
 
@@ -149,6 +151,8 @@ Your template with {{title}}, {{repo}}, {{local_path}},
 | `/api/issue?repo=X&number=N` | Full GitHub issue data + comments |
 | `/api/prompts` | List of available prompt templates |
 | `/api/context-audit` | Redacted read-only projection of the newest canonical repository-context baseline/delta |
+| `/api/pr-outcomes` | PR conversion, exact cycle times, state coverage, and explicit business-acceptance non-signal |
+| `/api/pr-outcomes?repo=X&number=N` | One PR outcome with dispatch, queue item, project, and structured-result links where available |
 | `/api/health` | Health check with queue counts |
 | `/health` | Simple health check |
 
@@ -191,6 +195,21 @@ are doing:
 POST /api/heartbeat
 Authorization: Bearer <worker-scoped token>
 {"item_id": "coral-way-capital/audit-agent#42", "phase": "writing tests", "progress": 0.7}
+```
+
+### PR Engineering Outcomes
+
+Signed `pull_request` and `pull_request_review` webhooks record opened,
+approved, changes-requested, merged, and closed-unmerged states idempotently.
+GitHub timestamps are preserved verbatim for review-cycle, review-delay, and
+time-to-merge calculations. PR state is engineering evidence only:
+`business_acceptance_state` is always `not_available`.
+
+The explicit backfill CLI re-reads a rolling 30-day window. Each PR commits
+independently and event natural keys make interruption and rerun safe:
+
+```bash
+python3 pr_outcomes.py --repo coral-way-capital/orchestrator
 ```
 
 ### Sync Response Format
