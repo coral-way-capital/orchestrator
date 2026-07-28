@@ -1670,7 +1670,7 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                         details={
                             "dispatch_id": dispatch_id,
                             "phase": "start",
-                            "error": str(telemetry_error)[:500],
+                            "error_type": type(telemetry_error).__name__,
                         },
                     )
             log_event("issue.dispatched", item_id=item_id, repo=repo,
