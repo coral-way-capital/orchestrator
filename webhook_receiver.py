@@ -38,6 +38,7 @@ from agent_traces import get_agent_trace_payload, ensure_trace_bundle, upsert_tr
 from worker_pools import WorkerPoolsManager
 from dispatch_telemetry import normalize_dispatch_telemetry
 import liveness as worker_liveness
+from portfolio import PortfolioError, build_advice_brief, get_project, load_portfolio
 try:
     import issue_queue_db
 except Exception:
@@ -738,7 +739,36 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         path = unquote(self.path.split("?")[0])
 
         # API routes
-        if path == "/api/queue":
+        if path == "/api/portfolio" or path.startswith("/api/portfolio/"):
+            try:
+                portfolio = load_portfolio()
+                if path == "/api/portfolio":
+                    self._json_response(portfolio)
+                    return
+                suffix = path[len("/api/portfolio/"):].strip("/")
+                wants_brief = suffix.endswith("/brief")
+                project_id = suffix[:-len("/brief")].strip("/") if wants_brief else suffix
+                project = get_project(portfolio, project_id)
+                if not project:
+                    self._json_response({"error": "portfolio project not found", "project_id": project_id}, 404)
+                    return
+                if wants_brief:
+                    self._json_response({
+                        "project_id": project_id,
+                        "brief": build_advice_brief(project),
+                        "generated_at": portfolio.get("generated_at"),
+                    })
+                    return
+                self._json_response(project)
+                return
+            except PortfolioError as exc:
+                self._json_response({
+                    "error": "portfolio unavailable",
+                    "detail": str(exc),
+                    "projects": [],
+                }, 503)
+                return
+        elif path == "/api/queue":
             self._json_response(self._queue_with_eligibility())
         elif path == "/api/queue-enriched":
             self._json_response(self._enriched_queue())
