@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.request import Request, urlopen
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
 # Add parent to path for queue import
 BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -38,6 +38,11 @@ from agent_traces import get_agent_trace_payload, ensure_trace_bundle, upsert_tr
 from worker_pools import WorkerPoolsManager
 from dispatch_telemetry import normalize_dispatch_telemetry
 import liveness as worker_liveness
+from worker_results import (
+    WorkerResultError,
+    ingest_worker_result,
+    list_results as list_worker_results,
+)
 from portfolio import PortfolioError, build_advice_brief, get_project, load_portfolio
 try:
     import issue_queue_db
@@ -79,6 +84,7 @@ MAX_DECOMPOSE_PENDING = 10
 DEFAULT_DISPATCH_PROVIDER = os.environ.get("CWC_DISPATCH_PROVIDER", "openai-codex")
 DEFAULT_DISPATCH_MODEL = os.environ.get("CWC_DISPATCH_MODEL", "gpt-5.5")
 BLOCKED_DISPATCH_MODELS = {"glm-5-turbo"}
+MAX_WORKER_RESULT_BODY = 262_144
 
 
 def trigger_dispatcher_async(reason="enqueue"):
@@ -140,6 +146,46 @@ def verify_signature(payload_body, signature_header):
         secret.encode(), payload_body, hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature_header)
+
+
+def verify_worker_result_auth(auth_header, body, signature_header):
+    """Authenticate a structured worker-result submission.
+
+    Accepted forms (any one):
+      1. HMAC-SHA256 signature (``X-Hub-Signature-256``) computed over ``body``
+         with EITHER the gateway secret or the GitHub webhook secret. This is
+         the same scheme used by gateway/worker callbacks.
+      2. Bearer token ``Authorization: Bearer <token>`` matching
+         ``CWC_WORKER_RESULT_TOKEN`` env var or the gateway secret file.
+         Allows workers without HMAC tooling to authenticate.
+
+    Returns True if any form validates. Verification fails closed when no
+    secret material is configured.
+    """
+    gateway_secret = load_gateway_secret()
+    webhook_secret = load_secret()
+    bearer_token = os.environ.get("CWC_WORKER_RESULT_TOKEN", "").strip()
+    if not gateway_secret and not webhook_secret and not bearer_token:
+        print("WARNING: No secret configured for worker-result auth; rejecting request")
+        return False
+
+    # 1. HMAC signature.
+    if signature_header and signature_header.startswith("sha256="):
+        for secret in (gateway_secret, webhook_secret):
+            if not secret:
+                continue
+            expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, signature_header):
+                return True
+
+    # 2. Bearer token.
+    allowed_tokens = {t for t in (bearer_token, gateway_secret, webhook_secret) if t}
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[len("Bearer "):].strip()
+        if token and any(hmac.compare_digest(token, allowed) for allowed in allowed_tokens):
+            return True
+
+    return False
 
 
 def classify_issue_size(body):
@@ -289,11 +335,22 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         try:
             content_length = int(self.headers.get("Content-Length", 0))
         except (TypeError, ValueError):
-            self._json_response({"error": "invalid Content-Length"}, 400)
+            self._json_response({"error": "Invalid Content-Length"}, 400)
             return
-        if path == "/api/heartbeat" and not 0 <= content_length <= 4096:
+        if content_length < 0:
+            self._json_response({"error": "Invalid Content-Length"}, 400)
+            return
+        if path == "/api/heartbeat" and content_length > 4096:
             self._json_response({"error": "heartbeat body too large"}, 413)
             return
+        if path == "/api/worker-result":
+            if content_length > MAX_WORKER_RESULT_BODY:
+                self._json_response({"error": "Worker result body too large"}, 413)
+                return
+            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if content_type != "application/json":
+                self._json_response({"error": "Content-Type must be application/json"}, 415)
+                return
         raw_body = self.rfile.read(content_length)
 
         # API dispatch route
@@ -572,6 +629,35 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             self._json_response(result, status)
             return
 
+        # Structured worker terminal-result receiver (idempotent, authenticated).
+        # Every dispatch emits one of these; log scraping stays a fallback only.
+        if path == "/api/worker-result":
+            signature = self.headers.get("X-Hub-Signature-256", "")
+            auth_header = self.headers.get("Authorization", "")
+            if not verify_worker_result_auth(auth_header, raw_body, signature):
+                self._json_response({"error": "Unauthorized"}, 401)
+                return
+            try:
+                payload = json.loads(raw_body)
+            except json.JSONDecodeError:
+                self._json_response({"error": "Invalid JSON"}, 400)
+                return
+            try:
+                outcome = ingest_worker_result(payload, source="worker_api")
+            except WorkerResultError as e:
+                self._json_response({"error": str(e), "ok": False}, 422)
+                return
+            except Exception as e:
+                log_event(
+                    "worker_result.error",
+                    details={"error": str(e)[:500], "path": path},
+                    source="worker_api",
+                )
+                self._json_response({"error": "Worker result could not be persisted", "ok": False}, 500)
+                return
+            self._json_response(outcome, 200)
+            return
+
         # GitHub webhook
         signature = self.headers.get("X-Hub-Signature-256", "")
 
@@ -739,7 +825,11 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         path = unquote(self.path.split("?")[0])
 
         # API routes
-        if path == "/api/portfolio" or path.startswith("/api/portfolio/"):
+        if path == "/api/worker-results":
+            params = parse_qs(urlparse(self.path).query)
+            item_id = params.get("item_id", [None])[0]
+            self._json_response({"results": list_worker_results(item_id=item_id)})
+        elif path == "/api/portfolio" or path.startswith("/api/portfolio/"):
             try:
                 portfolio = load_portfolio()
                 if path == "/api/portfolio":

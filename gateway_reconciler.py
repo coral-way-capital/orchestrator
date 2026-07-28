@@ -21,7 +21,10 @@ DEFAULT_GATEWAY_LOG = Path.home() / ".hermes" / "logs" / "gateway.log"
 RESPONSE_RE = re.compile(
     r"Response for (?P<dispatch_id>webhook:cwc-issue-dispatch:(?P<delivery_id>[^:\s]+)):\s*(?P<response>.*)$"
 )
-PR_RE = re.compile(r"\bPR\s*#(?P<pr>\d+)\b", re.IGNORECASE)
+PR_CONTRACT_RE = re.compile(
+    r"^(?:COMPLETED:\s*)?PR\s*#(?P<pr>\d+)[.!]?$",
+    re.IGNORECASE,
+)
 SELF_IMPROVEMENT_MARKERS = (
     "Self-improvement review:",
     "💾 Self-improvement review:",
@@ -65,7 +68,10 @@ def parse_gateway_response_line(line: str) -> dict[str, Any] | None:
             "final_response": response,
         }
 
-    pr_match = PR_RE.search(response)
+    # Only the explicit legacy terminal contract is accepted as success.
+    # A PR mention inside prose can describe pending, failed, or unrelated
+    # work and must go through linked-PR verification below.
+    pr_match = PR_CONTRACT_RE.fullmatch(response)
     if pr_match:
         return {
             "dispatch_id": dispatch_id,
