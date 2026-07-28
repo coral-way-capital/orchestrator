@@ -1511,6 +1511,7 @@ const TABS = [
 const EVENT_ICONS = {
   'issue.enqueued': '\u2193', 'issue.claimed': '\u2192', 'issue.completed': '\u2713',
   'issue.failed': '\u2717', 'issue.retried': '\u21BB', 'issue.reset': '\u00D7',
+  'issue.requeued': '\u21BA',
   'webhook.received': '\u25C9', 'webhook.classified': '\u25B8',
   'decompose.enqueued': '\u25A3', 'decompose.child_created': '\u25AA',
   'decompose.completed': '\u2713', 'decompose.failed': '\u2717',
@@ -1770,7 +1771,7 @@ function StatsBar({ queue, stats }) {
   `;
 }
 
-function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, onRetry, animClass, onClick }) {
+function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, onRetry, onRecover, animClass, onClick }) {
   const url = githubIssueUrl(item);
   const showActions = sectionKey === 'pending';
   const showRetry = sectionKey === 'failed';
@@ -1842,6 +1843,7 @@ function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, o
           `}
           ${sectionKey === 'in_progress' && html`
             <button class="card-action-btn btn-top" onClick=${() => onClick(item)} title="Inspect agent trace">Trace</button>
+            <button class="card-action-btn btn-bottom" onClick=${() => onRecover(item.id)} title="Safely requeue a confirmed-dead worker">Recover</button>
           `}
         </div>
       </div>
@@ -1849,7 +1851,7 @@ function IssueCard({ item, sectionKey, onPrioritize, onSendToBottom, onRemove, o
   `;
 }
 
-function KanbanSection({ sectionKey, label, icon, items, collapsed, onToggleCollapse, onPrioritize, onSendToBottom, onRemove, onRetry, cardAnimClass, onCardClick }) {
+function KanbanSection({ sectionKey, label, icon, items, collapsed, onToggleCollapse, onPrioritize, onSendToBottom, onRemove, onRetry, onRecover, cardAnimClass, onCardClick }) {
   return html`
     <div class="v-kanban-section section-${sectionKey} ${collapsed ? 'collapsed' : ''}">
       <div class="section-header" onClick=${onToggleCollapse}>
@@ -1872,6 +1874,7 @@ function KanbanSection({ sectionKey, label, icon, items, collapsed, onToggleColl
               onSendToBottom=${onSendToBottom}
               onRemove=${onRemove}
               onRetry=${onRetry}
+              onRecover=${onRecover}
               animClass=${cardAnimClass}
               onClick=${onCardClick}
             />
@@ -1882,7 +1885,7 @@ function KanbanSection({ sectionKey, label, icon, items, collapsed, onToggleColl
   `;
 }
 
-function VerticalKanban({ queue, statusFilter, completedPage, onPageChange, onPrioritize, onSendToBottom, onRemove, onRetry, onCardClick }) {
+function VerticalKanban({ queue, statusFilter, completedPage, onPageChange, onPrioritize, onSendToBottom, onRemove, onRetry, onRecover, onCardClick }) {
   const [collapsedSections, setCollapsedSections] = useState({ completed: false });
 
   if (!queue) return html`<div class="loading">Loading queue...</div>`;
@@ -1930,6 +1933,7 @@ function VerticalKanban({ queue, statusFilter, completedPage, onPageChange, onPr
           onSendToBottom=${onSendToBottom}
           onRemove=${onRemove}
           onRetry=${onRetry}
+          onRecover=${onRecover}
           onCardClick=${onCardClick}
         />
         ${s.paginated && queue._completedPages > 1 && html`
@@ -3012,6 +3016,37 @@ function App() {
     }, 350);
   }
 
+  async function recoverItem(itemId) {
+    const endpoint = API + '/api/queue/remove/' + encodeURIComponent(itemId);
+    try {
+      const previewResponse = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requeue: true, dry_run: true }),
+      });
+      const preview = await previewResponse.json();
+      if (!previewResponse.ok || !preview.ok) {
+        throw new Error(preview.reason || 'Worker recovery was refused');
+      }
+      if (!window.confirm(`Requeue ${itemId}? Branch, worktree, logs, phase, and recovery instructions will be preserved.`)) {
+        return;
+      }
+      const response = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requeue: true }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        throw new Error(result.reason || 'Worker recovery was refused');
+      }
+      showToast('Worker recovered and issue requeued', 'success');
+      queue.refresh();
+    } catch (e) {
+      showToast('Recovery refused: ' + e.message, 'error');
+    }
+  }
+
   async function retryItem(itemId) {
     try {
       await fetch(API + '/api/queue/retry/' + encodeURIComponent(itemId), { method: 'PATCH' });
@@ -3132,6 +3167,7 @@ function App() {
           onSendToBottom=${sendToBottom}
           onRemove=${removeItem}
           onRetry=${retryItem}
+          onRecover=${recoverItem}
           onCardClick=${openIssueDetail}
         />
       `}

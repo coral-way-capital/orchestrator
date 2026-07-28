@@ -1650,9 +1650,13 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             self._json_response({"ok": ok, "item_id": item_id, "action": "retry"})
         elif path.startswith("/api/queue/remove/"):
             item_id = path[len("/api/queue/remove/"):]
-            from queue import reset as queue_reset
-            ok = queue_reset(item_id)
-            self._json_response({"ok": ok, "item_id": item_id, "action": "remove"})
+            from queue import recover_item
+            result = recover_item(
+                item_id,
+                requeue=payload.get("requeue") is True,
+                dry_run=payload.get("dry_run") is True,
+            )
+            self._json_response(result, status=200 if result["ok"] else 409)
         else:
             self.send_response(404)
             self.end_headers()
