@@ -6,7 +6,10 @@ refreshing liveness, and reporting stable worker-shaped payloads.
 """
 import json
 import os
+import tempfile
 import time
+import fcntl
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 BASE_DIR = os.path.expanduser("~/.hermes/issue-queue")
@@ -33,10 +36,35 @@ class WorkerPoolsManager:
                 "workers": [],
             }
 
+    @contextmanager
+    def _exclusive_lock(self):
+        """Serialize durable pool read/modify/write operations."""
+        parent = os.path.dirname(self.worker_pools_file) or "."
+        os.makedirs(parent, exist_ok=True)
+        lock_path = self.worker_pools_file + ".lock"
+        with open(lock_path, "a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
     def _save(self, pools):
         pools["updated_at"] = datetime.now(timezone.utc).isoformat()
-        with open(self.worker_pools_file, "w") as f:
-            json.dump(pools, f, indent=2)
+        parent = os.path.dirname(self.worker_pools_file) or "."
+        os.makedirs(parent, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".worker-pools-", dir=parent)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(pools, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, self.worker_pools_file)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
         self._pools = pools
 
     def _find_worker(self, worker_id):
@@ -189,24 +217,43 @@ class WorkerPoolsManager:
             return []
 
     def remove_worker(self, worker_id):
-        pools = self._load()
-        previous = pools.get("workers", [])
-        workers = [w for w in previous if w.get("id") != worker_id]
-        if len(workers) == len(previous):
-            return False
-        pools["workers"] = workers
-        self._save(pools)
-        return True
+        with self._exclusive_lock():
+            pools = self._load()
+            previous = pools.get("workers", [])
+            workers = [w for w in previous if w.get("id") != worker_id]
+            if len(workers) == len(previous):
+                return False
+            pools["workers"] = workers
+            self._save(pools)
+            return True
+
+    def remove_worker_if_unchanged(self, expected_worker):
+        """Remove only the exact durable worker that was classified.
+
+        A heartbeat or external refresh between classification and recovery
+        changes the record and therefore fails closed instead of deleting a
+        newly-live worker.
+        """
+        with self._exclusive_lock():
+            pools = self._load()
+            worker_id = expected_worker.get("id")
+            current = self._find_worker_in(pools, worker_id)
+            if current != expected_worker:
+                return False
+            pools["workers"].remove(current)
+            self._save(pools)
+            return True
 
     def remove_worker_by_item(self, item_id):
-        pools = self._load()
-        previous = pools.get("workers", [])
-        workers = [w for w in previous if w.get("item_id") != item_id]
-        if len(workers) == len(previous):
-            return False
-        pools["workers"] = workers
-        self._save(pools)
-        return True
+        with self._exclusive_lock():
+            pools = self._load()
+            previous = pools.get("workers", [])
+            workers = [w for w in previous if w.get("item_id") != item_id]
+            if len(workers) == len(previous):
+                return False
+            pools["workers"] = workers
+            self._save(pools)
+            return True
 
     def active_worker_count(self):
         pools = self._load()

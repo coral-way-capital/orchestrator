@@ -3,6 +3,8 @@
 
 import importlib.util
 import json
+import os
+import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -117,6 +119,8 @@ def test_dry_run_is_byte_for_byte_non_mutating():
         manager = WorkerPoolsManager(str(pool_path))
         before_queue = queue_path.read_bytes()
         before_pool = pool_path.read_bytes()
+        before_queue_stat = queue_path.stat()
+        before_pool_stat = pool_path.stat()
         events = []
 
         result = module.recover_item(
@@ -134,7 +138,13 @@ def test_dry_run_is_byte_for_byte_non_mutating():
         assert result["action"] == "would_requeue"
         assert queue_path.read_bytes() == before_queue
         assert pool_path.read_bytes() == before_pool
+        assert queue_path.stat().st_mtime_ns == before_queue_stat.st_mtime_ns
+        assert queue_path.stat().st_ctime_ns == before_queue_stat.st_ctime_ns
+        assert pool_path.stat().st_mtime_ns == before_pool_stat.st_mtime_ns
+        assert pool_path.stat().st_ctime_ns == before_pool_stat.st_ctime_ns
         assert not (root / "traces").exists()
+        assert not (root / ".queue-recovery.lock").exists()
+        assert not (root / "worker_pools.json.lock").exists()
         assert events == []
 
 
@@ -219,9 +229,104 @@ def test_live_near_complete_and_uncertain_workers_are_refused():
             assert not (root / "traces").exists()
 
 
+def test_concurrent_worker_change_cannot_split_queue_and_pool():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        item_id, queue_path, pool_path = fixture(root)
+        module = load_queue_module()
+        configure(module, queue_path)
+        manager = WorkerPoolsManager(str(pool_path))
+        before_queue = queue_path.read_bytes()
+
+        def dead_probe_with_concurrent_heartbeat(_pid):
+            pools = json.loads(pool_path.read_text(encoding="utf-8"))
+            pools["workers"][0]["last_heartbeat_at"] = NOW.isoformat()
+            pool_path.write_text(json.dumps(pools, indent=2), encoding="utf-8")
+            return False
+
+        result = module.recover_item(
+            item_id,
+            requeue=True,
+            pools_manager=manager,
+            now=NOW,
+            process_probe=dead_probe_with_concurrent_heartbeat,
+            log_event_fn=lambda *_args, **_kwargs: None,
+            traces_root=root / "traces",
+        )
+
+        assert result["ok"] is False
+        assert result["action"] == "refused"
+        assert queue_path.read_bytes() == before_queue
+        assert json.loads(pool_path.read_text(encoding="utf-8"))["workers"][0]["item_id"] == item_id
+        assert not (root / "traces").exists()
+
+
+def test_queue_write_failure_restores_worker_without_audit_or_manifest():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        item_id, queue_path, pool_path = fixture(root)
+        module = load_queue_module()
+        configure(module, queue_path)
+        before_queue = queue_path.read_bytes()
+        events = []
+
+        def fail_save(_queue):
+            raise OSError("injected queue write failure")
+
+        module.save_queue = fail_save
+        try:
+            module.recover_item(
+                item_id,
+                requeue=True,
+                pools_manager=WorkerPoolsManager(str(pool_path)),
+                now=NOW,
+                process_probe=lambda _pid: False,
+                log_event_fn=lambda *args, **kwargs: events.append((args, kwargs)),
+                traces_root=root / "traces",
+            )
+            raise AssertionError("recovery unexpectedly succeeded")
+        except OSError as exc:
+            assert str(exc) == "injected queue write failure"
+
+        assert queue_path.read_bytes() == before_queue
+        workers = json.loads(pool_path.read_text(encoding="utf-8"))["workers"]
+        assert [worker["item_id"] for worker in workers] == [item_id]
+        assert events == []
+        assert not list((root / "traces").rglob("queue_recovery.json"))
+
+
+def test_patch_rejects_malformed_json_before_destructive_compatibility_remove():
+    with tempfile.TemporaryDirectory() as tmp:
+        code = """
+import io
+import webhook_receiver
+called = []
+handler = object.__new__(webhook_receiver.IssueWebhookHandler)
+handler.path = "/api/queue/remove/coral-way-capital%2Forchestrator%2321"
+handler.headers = {"Content-Length": "1", "Content-Type": "application/json"}
+handler.rfile = io.BytesIO(b"{")
+handler._json_response = lambda data, status=200: called.append((data, status))
+handler.do_PATCH()
+assert called == [({"error": "Invalid JSON"}, 400)], called
+"""
+        environment = dict(os.environ)
+        environment["HOME"] = tmp
+        result = subprocess.run(
+            ["python3", "-c", code],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
+
 if __name__ == "__main__":
     test_zombie_requeues_with_identity_and_recovery_evidence()
     test_dry_run_is_byte_for_byte_non_mutating()
     test_recovery_is_idempotent_and_reloads_durable_pool_state()
     test_live_near_complete_and_uncertain_workers_are_refused()
+    test_concurrent_worker_change_cannot_split_queue_and_pool()
+    test_queue_write_failure_restores_worker_without_audit_or_manifest()
+    test_patch_rejects_malformed_json_before_destructive_compatibility_remove()
     print("smoke_safe_recovery: ok")

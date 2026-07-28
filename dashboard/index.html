@@ -3004,10 +3004,17 @@ function App() {
   }
 
   async function removeItem(itemId) {
+    if (!window.confirm(`Permanently remove ${itemId} from Mission Control? This does not preserve or requeue active work.`)) {
+      return;
+    }
     animateCard(itemId, 'card-removed');
     setTimeout(async () => {
       try {
-        await fetch(API + '/api/queue/remove/' + encodeURIComponent(itemId), { method: 'PATCH' });
+        const response = await fetch(API + '/api/queue/remove/' + encodeURIComponent(itemId), { method: 'PATCH' });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error(result.reason || result.error || 'Removal was refused');
+        }
         showToast('Removed from queue', 'success');
         queue.refresh();
       } catch (e) {

@@ -1623,10 +1623,21 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         path = unquote(self.path.split("?")[0])
         try:
             content_length = int(self.headers.get("Content-Length", 0))
-            raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+        except (TypeError, ValueError):
+            self._json_response({"error": "Invalid Content-Length"}, 400)
+            return
+        if content_length < 0 or content_length > 64 * 1024:
+            self._json_response({"error": "Invalid Content-Length"}, 400)
+            return
+        raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+        try:
             payload = json.loads(raw_body) if raw_body else {}
-        except Exception:
-            payload = {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._json_response({"error": "Invalid JSON"}, 400)
+            return
+        if not isinstance(payload, dict):
+            self._json_response({"error": "JSON body must be an object"}, 400)
+            return
 
         if path.startswith("/api/queue/prioritize/"):
             item_id = path[len("/api/queue/prioritize/"):]
@@ -1650,13 +1661,28 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             self._json_response({"ok": ok, "item_id": item_id, "action": "retry"})
         elif path.startswith("/api/queue/remove/"):
             item_id = path[len("/api/queue/remove/"):]
+            if (
+                not item_id
+                or len(item_id) > 256
+                or any(ord(char) < 32 for char in item_id)
+                or set(payload) - {"requeue", "dry_run"}
+                or any(
+                    key in payload and not isinstance(payload[key], bool)
+                    for key in ("requeue", "dry_run")
+                )
+            ):
+                self._json_response({"error": "Invalid recovery request"}, 400)
+                return
             from queue import recover_item
             result = recover_item(
                 item_id,
                 requeue=payload.get("requeue") is True,
                 dry_run=payload.get("dry_run") is True,
             )
-            self._json_response(result, status=200 if result["ok"] else 409)
+            status = 200 if result["ok"] else (
+                404 if result.get("action") == "not_found" else 409
+            )
+            self._json_response(result, status=status)
         else:
             self.send_response(404)
             self.end_headers()
