@@ -85,6 +85,25 @@ def test_classification_uses_both_signals():
     assert dead_session.state == liveness.DEAD
 
 
+def test_uncertain_process_and_missing_heartbeat_are_never_dead():
+    malformed_pid = liveness.classify_worker(
+        worker(heartbeat_age=5 * 60, pid="not-a-pid"),
+        now=BASE_TIME,
+    )
+    assert malformed_pid.state == liveness.STALE
+    assert malformed_pid.process_alive is None
+
+    no_heartbeat = worker(heartbeat_age=5 * 60)
+    no_heartbeat.pop("last_heartbeat_at")
+    missing = liveness.classify_worker(
+        no_heartbeat,
+        now=BASE_TIME,
+        process_probe=lambda _pid: False,
+    )
+    assert missing.state == liveness.UNKNOWN
+    assert missing.stale is False
+
+
 def test_dispatch_preserves_available_process_and_recovery_metadata():
     telemetry = normalize_dispatch_telemetry({
         "process": {"pid": "424242"},
@@ -119,6 +138,30 @@ def test_heartbeat_records_phase_progress_with_fake_clock():
         assert updated["phase"] == "writing tests"
         assert updated["progress"] == 0.9
         assert updated["message"] == "4/5 complete"
+
+
+def test_heartbeat_authentication_and_validation():
+    token = liveness.make_heartbeat_token("test-secret", "cwc/demo#16")
+    assert liveness.verify_heartbeat_token(
+        "test-secret", "cwc/demo#16", token
+    )
+    assert not liveness.verify_heartbeat_token(
+        "test-secret", "cwc/demo#17", token
+    )
+
+    assert liveness.validate_heartbeat_payload({
+        "item_id": "cwc/demo#16",
+        "phase": "tests",
+        "progress": 1.0,
+    }) is None
+    assert liveness.validate_heartbeat_payload({
+        "item_id": "cwc/demo#16",
+        "progress": 1.1,
+    }) == "progress must be between 0 and 1"
+    assert liveness.validate_heartbeat_payload({
+        "item_id": "cwc/demo#16",
+        "phase": {"not": "text"},
+    }) == "phase must be a string"
 
 
 def test_manager_probe_uses_the_same_two_signal_model():
@@ -200,12 +243,46 @@ def test_reaping_is_safe_recoverable_audited_and_idempotent():
                 os.environ["CWC_AGENT_TRACES_DIR"] = old_traces
 
 
+def test_reaping_requires_a_durable_audit_event():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        pool_path = root / "worker_pools.json"
+        dead = worker(heartbeat_age=5 * 60, pid=222222)
+        manager = write_pool(pool_path, [dead])
+        old_traces = os.environ.get("CWC_AGENT_TRACES_DIR")
+        os.environ["CWC_AGENT_TRACES_DIR"] = str(root / "traces")
+        try:
+            def unavailable_audit(*_args, **_kwargs):
+                raise OSError("event store unavailable")
+
+            result = liveness.reap_dead_workers(
+                manager,
+                now=BASE_TIME,
+                process_probe=lambda _pid: False,
+                log_event_fn=unavailable_audit,
+            )
+            assert result.count == 0
+            assert [w["id"] for w in manager.workers()] == [dead["id"]]
+            assert result.errors == [{
+                "worker_id": dead["id"],
+                "error": "log: event store unavailable",
+            }]
+        finally:
+            if old_traces is None:
+                os.environ.pop("CWC_AGENT_TRACES_DIR", None)
+            else:
+                os.environ["CWC_AGENT_TRACES_DIR"] = old_traces
+
+
 def main():
     test_classification_uses_both_signals()
+    test_uncertain_process_and_missing_heartbeat_are_never_dead()
     test_dispatch_preserves_available_process_and_recovery_metadata()
     test_heartbeat_records_phase_progress_with_fake_clock()
+    test_heartbeat_authentication_and_validation()
     test_manager_probe_uses_the_same_two_signal_model()
     test_reaping_is_safe_recoverable_audited_and_idempotent()
+    test_reaping_requires_a_durable_audit_event()
     print("smoke_liveness: ok")
 
 

@@ -181,9 +181,12 @@ Reaping is **idempotent** and **fully audited**:
 - A structured `worker.reaped` event is logged via `events.log_event`.
 - Re-reaping an already-removed worker is a no-op.
 
-Workers emit heartbeats with phase/progress so the dashboard can show what long-running jobs are doing:
+Workers receive a scoped bearer token at dispatch and emit authenticated
+heartbeats with phase/progress so the dashboard can show what long-running jobs
+are doing:
 ```json
 POST /api/heartbeat
+Authorization: Bearer <worker-scoped token>
 {"item_id": "coral-way-capital/audit-agent#42", "phase": "writing tests", "progress": 0.7}
 ```
 

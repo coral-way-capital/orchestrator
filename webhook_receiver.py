@@ -37,6 +37,7 @@ from events import init_db, log_event, query_events, get_stats, get_decompose_tr
 from agent_traces import get_agent_trace_payload, ensure_trace_bundle, upsert_trace
 from worker_pools import WorkerPoolsManager
 from dispatch_telemetry import normalize_dispatch_telemetry
+import liveness as worker_liveness
 try:
     import issue_queue_db
 except Exception:
@@ -284,7 +285,14 @@ def load_queue_json():
 class IssueWebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(self.path.split("?")[0])
-        content_length = int(self.headers.get("Content-Length", 0))
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            self._json_response({"error": "invalid Content-Length"}, 400)
+            return
+        if path == "/api/heartbeat" and not 0 <= content_length <= 4096:
+            self._json_response({"error": "heartbeat body too large"}, 413)
+            return
         raw_body = self.rfile.read(content_length)
 
         # API dispatch route
@@ -466,13 +474,34 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 self._json_response({"error": "Invalid JSON"}, 400)
                 return
+            validation_error = worker_liveness.validate_heartbeat_payload(payload)
+            if validation_error:
+                self._json_response({"error": validation_error}, 400)
+                return
             worker_id = payload.get("worker_id")
             item_id = payload.get("item_id")
-            if not worker_id and not item_id:
-                self._json_response({"error": "worker_id or item_id required"}, 400)
+            matched_worker = next((
+                worker for worker in _pool_mgr.workers()
+                if (worker_id and worker.get("id") == worker_id)
+                or (not worker_id and item_id and worker.get("item_id") == item_id)
+            ), None)
+            matched_item_id = matched_worker.get("item_id") if matched_worker else item_id
+            if item_id and item_id != matched_item_id:
+                self._json_response({"error": "worker_id and item_id do not match"}, 400)
+                return
+            heartbeat_secret = load_gateway_secret() or load_secret()
+            if not heartbeat_secret:
+                self._json_response({"error": "heartbeat authentication unavailable"}, 503)
+                return
+            authorization = self.headers.get("Authorization", "")
+            scheme, _, token = authorization.partition(" ")
+            if not matched_worker or scheme.lower() != "bearer" or not worker_liveness.verify_heartbeat_token(
+                heartbeat_secret, matched_item_id, token
+            ):
+                self._json_response({"error": "unauthorized"}, 401)
                 return
             updated = _pool_mgr.record_heartbeat(
-                worker_id=worker_id, item_id=item_id,
+                worker_id=matched_worker.get("id"), item_id=matched_item_id,
                 phase=payload.get("phase"),
                 progress=payload.get("progress"),
                 message=payload.get("message"),
@@ -480,10 +509,11 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             if not updated:
                 self._json_response({"error": "worker not found"}, 404)
                 return
-            log_event("worker.heartbeat", item_id=item_id,
-                      details={"worker_id": worker_id, "phase": payload.get("phase"),
+            log_event("worker.heartbeat", item_id=matched_item_id,
+                      details={"worker_id": matched_worker.get("id"), "phase": payload.get("phase"),
                                "progress": payload.get("progress")})
-            self._json_response({"ok": True, "worker_id": worker_id, "item_id": item_id})
+            self._json_response({"ok": True, "worker_id": matched_worker.get("id"),
+                                 "item_id": matched_item_id})
             return
 
         if path == "/api/dispatch":
@@ -1259,6 +1289,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         # receives this and spawns a coding agent
         local_path = REPO_MAP.get(repo, f"/home/deploy/apps/{repo.split('/')[-1]}")
         secret = load_gateway_secret() or load_secret() or ""
+        heartbeat_url = f"http://100.102.201.26:{os.environ.get('PORT', '8646')}/api/heartbeat"
+        heartbeat_token = worker_liveness.make_heartbeat_token(secret, item_id)
 
         payload = {
             "action": "opened",
@@ -1281,6 +1313,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             "local_path": local_path,
             "prompt_id": prompt_id,
             "item_id": item_id,
+            "heartbeat_url": heartbeat_url,
+            "heartbeat_token": heartbeat_token,
             "model_provider": model_provider,
             "model": model_name,
             "chain_pr_guardian": True,
@@ -1315,8 +1349,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             dispatch_id = telemetry.get("dispatch_id")
             session_id = telemetry.get("session_id")
             agent_pid = telemetry.get("pid")
-            branch = telemetry.get("branch") or item.get("branch")
-            worktree = telemetry.get("worktree") or item.get("worktree") or local_path
+            branch = telemetry.get("branch") or f"fix/issue-{issue_number}"
+            worktree = telemetry.get("worktree") or f"/tmp/cwc-work-{issue_number}"
 
             # Track the dispatch. Gateway may not expose PID yet; diagnostics
             # below make that explicit for worker pool and API consumers.

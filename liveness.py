@@ -28,6 +28,9 @@ process probes with no sleeps.
 
 from __future__ import annotations
 
+import errno
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -43,10 +46,8 @@ from typing import Callable, Optional
 #: A worker is *stale* when its last heartbeat is older than this.
 HEARTBEAT_TIMEOUT_SECONDS = 60
 
-#: Stale workers whose process/session is confirmed dead are reaped.
-#: A worker that has been stale this long without any heartbeat is
-#: considered for reaping regardless of started_at (but still requires a
-#: failed process check).
+#: Maximum killed-worker detection SLA. Classification is normally faster
+#: (immediately after the 60-second heartbeat timeout and a conclusive probe).
 DEAD_CONFIRMATION_SECONDS = 5 * 60  # 5 minutes – killed-worker detection SLA
 
 #: Worker lifecycle states.
@@ -81,25 +82,78 @@ def safe_item_id(item_id: str) -> str:
     return safe.strip("._") or "unknown"
 
 
-def default_process_probe(pid) -> bool:
-    """Return ``True`` if *pid* is running, ``False`` otherwise.
+def make_heartbeat_token(secret: str, item_id: str) -> str:
+    """Return a worker-scoped bearer token without exposing the server secret."""
+    return hmac.new(
+        str(secret).encode("utf-8"),
+        str(item_id).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
-    Uses ``os.kill(pid, 0)`` – no signal is sent, just an existence check.
-    """
-    if pid in (None, "", 0):
+
+def verify_heartbeat_token(secret: str, item_id: str, token: str) -> bool:
+    if not secret or not item_id or not token:
         return False
+    return hmac.compare_digest(make_heartbeat_token(secret, item_id), str(token))
+
+
+def validate_heartbeat_payload(payload) -> Optional[str]:
+    """Return a validation error for an API heartbeat, or ``None``."""
+    if not isinstance(payload, dict):
+        return "JSON body must be an object"
+    worker_id = payload.get("worker_id")
+    item_id = payload.get("item_id")
+    if not worker_id and not item_id:
+        return "worker_id or item_id required"
+    for name, value in (("worker_id", worker_id), ("item_id", item_id)):
+        if value is not None and (
+            not isinstance(value, str) or not value.strip() or len(value) > 256
+        ):
+            return f"{name} must be a non-empty string up to 256 characters"
+    for name, limit in (("phase", 200), ("message", 1000)):
+        value = payload.get(name)
+        if value is not None and not isinstance(value, str):
+            return f"{name} must be a string"
+        if value is not None and len(value) > limit:
+            return f"{name} must be at most {limit} characters"
+    progress = payload.get("progress")
+    if progress is not None:
+        if isinstance(progress, bool) or not isinstance(progress, (int, float)):
+            return "progress must be a number"
+        if not 0 <= progress <= 1:
+            return "progress must be between 0 and 1"
+    return None
+
+
+def default_process_probe(pid) -> Optional[bool]:
+    """Return process evidence for a validated, positive PID.
+
+    ``True`` means the process exists, ``False`` means the kernel confirmed it
+    is gone, and ``None`` means the PID or probe result is uncertain. Uses
+    ``os.kill(pid, 0)`` – no signal is sent, just an existence check.
+    """
+    if isinstance(pid, bool):
+        return None
+    if isinstance(pid, int):
+        parsed_pid = pid
+    elif isinstance(pid, str) and pid.strip().isdigit():
+        parsed_pid = int(pid.strip())
+    else:
+        return None
+    if parsed_pid <= 0:
+        return None
     try:
-        os.kill(int(pid), 0)
+        os.kill(parsed_pid, 0)
         return True
     except ProcessLookupError:
-        return False
-    except (ValueError, TypeError):
         return False
     except PermissionError:
         # Process exists but we lack permission – treat as running.
         return True
-    except OSError:
-        return False
+    except OSError as exc:
+        # Only ESRCH conclusively proves absence. EINVAL and other failures are
+        # uncertainty, never permission to reap.
+        return False if exc.errno == errno.ESRCH else None
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +208,7 @@ def classify_worker(
     pid = worker.get("pid") or worker.get("item_pid")
 
     # --- heartbeat age ---------------------------------------------------
-    hb_value = worker.get("last_heartbeat_at") or worker.get("started_at") or worker.get("claimed_at")
+    hb_value = worker.get("last_heartbeat_at")
     hb_dt = parse_iso(hb_value)
     hb_age: Optional[float] = None
     if hb_dt is not None:
@@ -309,10 +363,14 @@ def write_recovery_manifest(worker: dict, result: LivenessResult, *, now: Option
         "worktree": worker.get("worktree") or worker.get("local_path"),
         "log_path": worker.get("log_path"),
         "transcript_path": worker.get("transcript_path"),
+        "session_path": worker.get("session_path"),
+        "status_path": worker.get("status_path"),
         "logs": [
             path for path in (
                 worker.get("log_path"),
                 worker.get("transcript_path"),
+                worker.get("session_path"),
+                worker.get("status_path"),
             )
             if path
         ],
@@ -376,12 +434,13 @@ def reap_dead_workers(
     now = now or datetime.now(timezone.utc)
 
     # Resolve event logger lazily so the module is importable without events.py.
+    audit_error = None
     if log_event_fn is None:
         try:
             import events as _events
             log_event_fn = _events.log_event
-        except Exception:
-            log_event_fn = lambda *a, **kw: None  # noqa: E731
+        except Exception as exc:
+            audit_error = exc
 
     result = ReapResult()
 
@@ -389,6 +448,13 @@ def reap_dead_workers(
     # make idempotency guarantees explicit.
     current_workers = list(pools_manager.workers())
     if not current_workers:
+        return result
+    if log_event_fn is None:
+        for worker in current_workers:
+            result.errors.append({
+                "worker_id": worker.get("id", "?"),
+                "error": f"log: event store unavailable: {audit_error}",
+            })
         return result
 
     for worker in current_workers:
@@ -427,20 +493,10 @@ def reap_dead_workers(
             # Preservation is a prerequisite for reaping.
             continue
 
-        # Remove the exact worker only after its recovery record is durable.
-        try:
-            removed = pools_manager.remove_worker(wid)
-            if not removed:
-                result.skipped_already_reaped.append({
-                    "worker_id": wid,
-                    "item_id": item_id,
-                })
-                continue
-        except Exception as exc:
-            result.errors.append({"worker_id": wid, "error": f"remove: {exc}"})
-            continue
-
+        # Retain the historical reap_stale() worker-shaped return contract,
+        # while adding explicit liveness/audit fields for newer callers.
         reaped_record = {
+            **worker,
             "worker_id": wid,
             "item_id": item_id,
             "repo": worker.get("repo"),
@@ -454,9 +510,9 @@ def reap_dead_workers(
             "recovery_manifest": classification.recovery_manifest,
             "reaped_at": now.isoformat(),
         }
-        result.reaped.append(reaped_record)
 
-        # Audit event (idempotent: we only emit for workers that were present).
+        # A durable audit event is a prerequisite for removal. If the event
+        # store is unavailable, preserve the worker for a later safe retry.
         try:
             log_event_fn(
                 "worker.reaped",
@@ -466,6 +522,22 @@ def reap_dead_workers(
             )
         except Exception as exc:
             result.errors.append({"worker_id": wid, "error": f"log: {exc}"})
+            continue
+
+        # Remove the exact worker only after recovery and audit records exist.
+        try:
+            removed = pools_manager.remove_worker(wid)
+            if not removed:
+                result.skipped_already_reaped.append({
+                    "worker_id": wid,
+                    "item_id": item_id,
+                })
+                continue
+        except Exception as exc:
+            result.errors.append({"worker_id": wid, "error": f"remove: {exc}"})
+            continue
+
+        result.reaped.append(reaped_record)
 
     return result
 
@@ -500,6 +572,8 @@ def record_heartbeat(
     target = None
     for w in workers:
         if worker_id and w.get("id") == worker_id:
+            if item_id and w.get("item_id") != item_id:
+                return False
             target = w
             break
         if item_id and w.get("item_id") == item_id:
