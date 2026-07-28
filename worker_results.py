@@ -627,8 +627,10 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
         summary = apply_outcome_to_queue(
             result, queue, mutate=not conflict
         )
+        terminal_event_item = None
         if summary.get("applied"):
             queue_saver(queue)
+            terminal_event_item, _ = _find_in_progress_item(queue, item_id)
 
         should_record_trace = bool(summary.get("applied")) or not (
             conflict
@@ -648,6 +650,21 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
             queue_mod._pool_cleanup(item_id)
         except Exception:
             pass
+        canonical_event = "issue.completed" if result["status"] == "completed" else "issue.failed"
+        canonical_details = {"source": result.get("source"), "dispatch_id": dispatch_id}
+        if result["status"] == "completed":
+            canonical_details["pr_number"] = result.get("pr_number")
+        else:
+            canonical_details["error"] = result.get("error_summary")
+        event_logger(
+            canonical_event,
+            item_id=item_id,
+            repo=(terminal_event_item or {}).get("repo") or result.get("repo"),
+            issue_number=(terminal_event_item or {}).get("issue_number") or result.get("issue_number"),
+            title=(terminal_event_item or {}).get("title"),
+            details=canonical_details,
+            source=result.get("source") or "worker",
+        )
 
     # Auditable event log. Always emit something so duplicate delivery is visible.
     event_type = "worker_result.duplicate" if (

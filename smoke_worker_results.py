@@ -147,6 +147,7 @@ def test_signed_http_result_updates_state_under_five_seconds_and_audits_duplicat
             assert queue_state["completed"][0]["pr_number"] == 115
             assert queue_state["in_progress"] == []
             assert [event[0] for event in events] == [
+                "issue.completed",
                 "worker_result.received",
                 "worker_result.duplicate",
             ]
@@ -551,6 +552,8 @@ def test_structured_result_updates_agent_trace_metadata():
     assert updated["status"] == "completed"
     assert updated["pr_number"] == 120
     assert updated["exit_reason"] == "worker_result"
+    assert [event[0] for event in events] == ["issue.completed", "worker_result.received"]
+    assert events[0][1]["details"]["pr_number"] == 120
     meta = json.loads(agent_traces.bundle_paths(item_id)["meta_json"].read_text(encoding="utf-8"))
     assert meta["worker_result_status"] == "completed"
     assert meta["worker_result_pr_number"] == 120
