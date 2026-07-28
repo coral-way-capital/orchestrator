@@ -43,6 +43,12 @@ from worker_results import (
     ingest_worker_result,
     list_results as list_worker_results,
 )
+from pr_outcomes import (
+    PROutcomeError,
+    build_report as build_pr_outcomes_report,
+    get_pull_request as get_pr_outcome,
+    ingest_webhook as ingest_pr_webhook,
+)
 from portfolio import PortfolioError, build_advice_brief, get_project, load_portfolio
 from context_audit_reports import load_context_audit
 from decomposition import queue_lock as decomposition_queue_lock
@@ -88,6 +94,7 @@ DEFAULT_DISPATCH_PROVIDER = os.environ.get("CWC_DISPATCH_PROVIDER", "openai-code
 DEFAULT_DISPATCH_MODEL = os.environ.get("CWC_DISPATCH_MODEL", "gpt-5.5")
 BLOCKED_DISPATCH_MODELS = {"glm-5-turbo"}
 MAX_WORKER_RESULT_BODY = 262_144
+MAX_GITHUB_WEBHOOK_BODY = 2_097_152
 
 
 def trigger_dispatcher_async(reason="enqueue"):
@@ -141,8 +148,8 @@ def verify_signature(payload_body, signature_header):
     """Verify GitHub webhook HMAC-SHA256 signature."""
     secret = load_secret()
     if not secret:
-        print("WARNING: No webhook secret configured, skipping verification")
-        return True
+        print("WARNING: No webhook secret configured; rejecting webhook")
+        return False
     if not signature_header:
         return False
     expected = "sha256=" + hmac.new(
@@ -357,6 +364,9 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             if content_type != "application/json":
                 self._json_response({"error": "Content-Type must be application/json"}, 415)
                 return
+        if path == "/" and content_length > MAX_GITHUB_WEBHOOK_BODY:
+            self._json_response({"error": "GitHub webhook body too large"}, 413)
+            return
         raw_body = self.rfile.read(content_length)
 
         # API dispatch route
@@ -684,6 +694,35 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         event = self.headers.get("X-GitHub-Event", "")
         action = payload.get("action", "")
 
+        if event in {"pull_request", "pull_request_review"}:
+            try:
+                outcome = ingest_pr_webhook(
+                    event,
+                    payload,
+                    event_logger=log_event,
+                )
+            except PROutcomeError as exc:
+                self._json_response({"error": str(exc), "ok": False}, 422)
+                return
+            except Exception as exc:
+                log_event(
+                    "pr.outcome_error",
+                    repo=(payload.get("repository") or {}).get("full_name"),
+                    details={
+                        "event": event,
+                        "action": action,
+                        "error": str(exc)[:500],
+                    },
+                    source="github_webhook",
+                )
+                self._json_response(
+                    {"error": "PR outcome could not be persisted", "ok": False},
+                    500,
+                )
+                return
+            self._json_response({"ok": True, **outcome})
+            return
+
         if event == "issues" and action in {"opened", "assigned", "unassigned", "edited", "labeled", "unlabeled", "reopened"}:
             issue = payload.get("issue", {})
             repo = payload.get("repository", {}).get("full_name", "")
@@ -838,6 +877,34 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         elif path == "/api/context-audit":
             context_audit = load_context_audit()
             self._json_response(context_audit, 200 if context_audit["available"] else 503)
+        elif path == "/api/pr-outcomes":
+            params = parse_qs(urlparse(self.path).query)
+            repo = params.get("repo", [None])[0]
+            number = params.get("number", [None])[0]
+            if repo is None and number is None:
+                self._json_response(build_pr_outcomes_report())
+                return
+            if repo is None or number is None:
+                self._json_response(
+                    {"error": "repo and integer number are required"}, 400
+                )
+                return
+            try:
+                pr_number = int(number)
+            except ValueError:
+                self._json_response(
+                    {"error": "repo and integer number are required"}, 400
+                )
+                return
+            try:
+                outcome = get_pr_outcome(repo or "", pr_number)
+            except PROutcomeError as exc:
+                self._json_response({"error": str(exc)}, 400)
+                return
+            if outcome is None:
+                self._json_response({"error": "PR outcome not found"}, 404)
+                return
+            self._json_response(outcome)
         elif path == "/api/portfolio" or path.startswith("/api/portfolio/"):
             try:
                 portfolio = load_portfolio()

@@ -1,0 +1,58 @@
+{
+  "repository": {
+    "full_name": "coral-way-capital/orchestrator"
+  },
+  "pull_requests": [
+    {
+      "id": 17001,
+      "number": 17,
+      "html_url": "https://github.com/coral-way-capital/orchestrator/pull/17",
+      "state": "closed",
+      "created_at": "2026-07-01T10:00:00Z",
+      "updated_at": "2026-07-03T15:30:00Z",
+      "closed_at": "2026-07-03T15:30:00Z",
+      "merged_at": "2026-07-03T15:30:00Z",
+      "body": "Closes coral-way-capital/cwc-control-plane#17"
+    },
+    {
+      "id": 17002,
+      "number": 18,
+      "html_url": "https://github.com/coral-way-capital/orchestrator/pull/18",
+      "state": "closed",
+      "created_at": "2026-07-05T09:00:00Z",
+      "updated_at": "2026-07-06T12:00:00Z",
+      "closed_at": "2026-07-06T12:00:00Z",
+      "merged_at": null,
+      "body": ""
+    }
+  ],
+  "reviews": {
+    "17": [
+      {
+        "id": 171,
+        "state": "CHANGES_REQUESTED",
+        "submitted_at": "2026-07-01T12:00:00Z",
+        "user": {"login": "reviewer-one"}
+      },
+      {
+        "id": 172,
+        "state": "APPROVED",
+        "submitted_at": "2026-07-02T09:15:00Z",
+        "user": {"login": "reviewer-one"}
+      },
+      {
+        "id": 173,
+        "state": "CHANGES_REQUESTED",
+        "submitted_at": "2026-07-02T13:00:00Z",
+        "user": {"login": "reviewer-two"}
+      },
+      {
+        "id": 174,
+        "state": "APPROVED",
+        "submitted_at": "2026-07-03T08:00:00Z",
+        "user": {"login": "reviewer-two"}
+      }
+    ],
+    "18": []
+  }
+}
