@@ -136,6 +136,10 @@ def test_signed_http_result_updates_state_under_five_seconds_and_audits_duplicat
                 "worker_result.duplicate",
             ]
             assert result["duplicate"] is True
+            trace = __import__("agent_traces").get_latest_trace_for_item(_payload()["item_id"])
+            assert trace["status"] == "completed"
+            assert trace["pr_number"] == 115
+            assert trace["exit_reason"] == "worker_result"
 
             conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=2)
             conn.request("GET", f"/api/worker-results?item_id={quote(_payload()['item_id'], safe='')}")
@@ -164,6 +168,9 @@ def test_session_fallback_never_infers_success_from_ambiguous_text():
         (trace / "final.txt").write_text("The change is not merged; review is pending.", encoding="utf-8")
         candidates = worker_results.scan_session_files(Path(td), queue=queue)
     assert candidates[0]["status"] == "unknown"
+    report = backfill_report.build_report(queue, session_candidates=candidates)
+    assert report["unknown"][0]["evidence_sources"] == ["session_file"]
+    assert "review is pending" in report["unknown"][0]["evidence"]["final_text"]
 
 
 def test_stale_dispatch_result_cannot_finish_newer_dispatch():
@@ -339,6 +346,26 @@ def test_backfill_uses_legacy_telemetry_dispatch_id_and_apply_preserves_unknown(
     moved = backfill_report.apply_report(report, queue)
     assert moved["failed"] == 1
     assert queue["failed"][0]["error"] == "FAILED: deterministic evidence"
+
+    no_dispatch_item = {
+        "id": "coral-way-capital/demo#18",
+        "repo": "coral-way-capital/demo",
+        "issue_number": 18,
+    }
+    queue = {"pending": [], "in_progress": [no_dispatch_item], "completed": [], "failed": []}
+    report = {
+        "generated_at": "2026-07-27T12:00:00+00:00",
+        "resolved": [{
+            "item_id": no_dispatch_item["id"],
+            "dispatch_id": None,
+            "resolved_status": "completed",
+            "pr_number": 118,
+        }],
+        "unknown": [],
+    }
+    moved = backfill_report.apply_report(report, queue)
+    assert moved["completed"] == 1
+    assert queue["completed"][0]["pr_number"] == 118
 
 
 if __name__ == "__main__":

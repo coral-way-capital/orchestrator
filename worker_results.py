@@ -476,6 +476,64 @@ def apply_outcome_to_queue(result: dict[str, Any], queue: dict[str, Any],
     return summary
 
 
+def _update_agent_trace_from_result(item: dict[str, Any] | None, result: dict[str, Any]) -> None:
+    """Finalize agent_traces metadata when a structured result mutates queue state."""
+    if not item:
+        return
+    try:
+        from agent_traces import ensure_trace_bundle, get_latest_trace_for_item, upsert_trace
+
+        item_id = result.get("item_id") or item.get("id")
+        existing = get_latest_trace_for_item(item_id)
+        trace_paths = ensure_trace_bundle(item_id)
+        final_text = (
+            f"COMPLETED: {item_id} PR#{result.get('pr_number')}"
+            if result.get("status") == "completed"
+            else (result.get("error_summary") or "FAILED: worker result reported failure")
+        )
+        trace_paths["final_txt"].write_text(final_text, encoding="utf-8")
+        meta_path = trace_paths["meta_json"]
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+        except Exception:
+            meta = {}
+        meta.update({
+            "worker_result_received_at": result.get("received_at") or now_iso(),
+            "worker_result_status": result.get("status"),
+            "worker_result_pr_number": result.get("pr_number"),
+            "worker_result_error_summary": result.get("error_summary"),
+            "dispatch_id": result.get("dispatch_id") or item.get("dispatch_id"),
+            "session_id": result.get("session_id") or item.get("session_id"),
+        })
+        meta_path.write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
+
+        fields = {
+            "item_id": item_id,
+            "repo": result.get("repo") or item.get("repo"),
+            "issue_number": result.get("issue_number") or item.get("issue_number"),
+            "session_id": result.get("session_id") or item.get("session_id"),
+            "dispatch_id": result.get("dispatch_id") or item.get("dispatch_id"),
+            "pid": item.get("agent_pid"),
+            "status": result.get("status"),
+            "finished_at": now_iso(),
+            "pr_number": result.get("pr_number"),
+            "exit_reason": "worker_result",
+            "error_summary": result.get("error_summary"),
+            "log_path": item.get("log_path") or item.get("agent_log"),
+            "transcript_path": item.get("transcript_path") or item.get("session_path"),
+            "trace_dir": str(trace_paths["trace_dir"]),
+        }
+        if existing and existing.get("id"):
+            fields["id"] = existing["id"]
+            fields.setdefault("started_at", existing.get("started_at"))
+            fields.setdefault("model_provider", existing.get("model_provider"))
+            fields.setdefault("model", existing.get("model"))
+            fields.setdefault("prompt_id", existing.get("prompt_id"))
+        upsert_trace(**fields)
+    except Exception:
+        pass
+
+
 # --------------------------------------------------------------------------- #
 # Public ingest entrypoint
 # --------------------------------------------------------------------------- #
@@ -543,7 +601,9 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
         or summary.get("dispatch_mismatch")
     )
     if summary.get("applied"):
+        applied_item, _ = _find_in_progress_item(queue, item_id)
         queue_saver(queue)
+        _update_agent_trace_from_result(applied_item, result)
         try:
             import queue as queue_mod  # type: ignore[import-not-found]
             queue_mod._pool_cleanup(item_id)
