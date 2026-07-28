@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "traces": [
+    {
+      "trace_id": "synthetic-rsm-001",
+      "client_slug": "rsm",
+      "project_contract": {
+        "version": 2,
+        "project_id": "rsm-eckhart"
+      },
+      "stages": {
+        "project": {"reference": "synthetic://projects/rsm-eckhart", "occurred_at": "2026-07-01T09:00:00Z"},
+        "issue": {"reference": "synthetic://github/issues/101", "occurred_at": "2026-07-01T10:00:00Z"},
+        "run": {"reference": "synthetic://runs/rsm-eckhart-001", "occurred_at": "2026-07-01T11:00:00Z"},
+        "pr": {"reference": "synthetic://github/prs/201", "occurred_at": "2026-07-01T13:00:00Z"},
+        "reviewed": {"reference": "synthetic://github/reviews/201", "occurred_at": "2026-07-02T09:00:00Z"},
+        "merged": {"reference": "synthetic://github/merges/201", "occurred_at": "2026-07-02T10:00:00Z"},
+        "accepted": {"reference": null, "occurred_at": null}
+      },
+      "acceptance": {
+        "reviewer": null,
+        "status": "unknown",
+        "evidence_source": null,
+        "observed_at": null,
+        "accepted_at": null,
+        "provenance": null
+      }
+    },
+    {
+      "trace_id": "synthetic-zenna-001",
+      "client_slug": "zenna",
+      "project_contract": {
+        "version": 2,
+        "project_id": "zenna-crm"
+      },
+      "stages": {
+        "project": {"reference": "synthetic://projects/zenna-crm", "occurred_at": "2026-07-07T09:00:00Z"},
+        "issue": {"reference": "synthetic://github/issues/102", "occurred_at": "2026-07-07T10:00:00Z"},
+        "run": {"reference": "synthetic://runs/zenna-crm-001", "occurred_at": "2026-07-07T11:00:00Z"},
+        "pr": {"reference": "synthetic://github/prs/202", "occurred_at": "2026-07-07T13:00:00Z"},
+        "reviewed": {"reference": "synthetic://github/reviews/202", "occurred_at": "2026-07-08T09:00:00Z"},
+        "merged": {"reference": "synthetic://github/merges/202", "occurred_at": "2026-07-08T10:00:00Z"},
+        "accepted": {"reference": null, "occurred_at": null}
+      },
+      "acceptance": {
+        "reviewer": null,
+        "status": "unknown",
+        "evidence_source": null,
+        "observed_at": null,
+        "accepted_at": null,
+        "provenance": null
+      }
+    }
+  ]
+}

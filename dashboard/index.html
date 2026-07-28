@@ -948,6 +948,13 @@
   }
   .portfolio-copy:hover { border-color: var(--border-accent-strong); transform: translateY(-1px); }
   .portfolio-empty { padding: 4rem 1rem; text-align: center; color: var(--text-muted); }
+  .outcome-funnel { display: grid; grid-template-columns: repeat(7, minmax(110px, 1fr)); gap: 0.65rem; margin: 1.25rem 0; overflow-x: auto; }
+  .outcome-stage { min-width: 110px; padding: 1rem; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); }
+  .outcome-stage strong { display: block; font-size: 1.7rem; margin: 0.25rem 0; }
+  .outcome-traces { display: grid; gap: 0.85rem; }
+  .outcome-trace { padding: 1rem; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); }
+  .outcome-trace-head { display: flex; justify-content: space-between; gap: 1rem; align-items: start; }
+  .outcome-reference { font-family: var(--font-mono); font-size: 0.67rem; color: var(--text-muted); overflow-wrap: anywhere; margin-top: 0.35rem; }
 
   @media (max-width: 900px) {
     .portfolio-grid { grid-template-columns: 1fr; }
@@ -1710,6 +1717,7 @@ const POLL_MS = 5000;
 
 const TABS = [
   { id: 'portfolio', label: 'Portfolio', icon: '\u25C8' },
+  { id: 'outcomes', label: 'Outcomes', icon: '\u25C9' },
   { id: 'context-audit', label: 'Context audit', icon: '\u25CE' },
   { id: 'kanban', label: 'Kanban', icon: '\u25A3' },
   { id: 'agents', label: 'Live Agents', icon: '\u25B6' },
@@ -2338,6 +2346,71 @@ function PortfolioView({ portfolio, loading, error }) {
           </div>
         </section>
       </div>
+    </div>
+  `;
+}
+
+const OUTCOME_STAGE_LABELS = {
+  project: 'Project',
+  issue: 'Issue',
+  run: 'Run',
+  pr: 'PR',
+  reviewed: 'Reviewed',
+  merged: 'Merged',
+  accepted: 'Accepted',
+};
+
+function OutcomeFunnelView({ outcomes, portfolio, loading, error }) {
+  if (loading) return html`<div class="portfolio-empty">Loading accepted-outcome traces...</div>`;
+  if (error) return html`<div class="portfolio-empty">Outcome funnel unavailable: ${error}</div>`;
+  if (!outcomes?.available) return html`
+    <div class="portfolio-empty">
+      <strong>Trace source unavailable.</strong>
+      No accepted-unit count can be inferred until a canonical references-only trace source is configured.
+    </div>
+  `;
+  const traces = outcomes?.traces || [];
+  const funnel = outcomes?.funnel || {};
+  const projectsById = Object.fromEntries(
+    (portfolio?.projects || []).map(project => [project.id, project])
+  );
+  return html`
+    <div class="portfolio-view">
+      <section class="portfolio-hero">
+        <div>
+          <div class="portfolio-eyebrow">Read-only acceptance evidence</div>
+          <h1>Trace outcomes without inventing them.</h1>
+          <p>Project → issue → run → PR → reviewed → merged → accepted. Unknown remains unknown until a separate reviewer and evidence envelope is recorded.</p>
+        </div>
+        <div class="portfolio-asof">NO MUTATIONS</div>
+      </section>
+      <div class="outcome-funnel" aria-label="Accepted outcome funnel">
+        ${Object.keys(OUTCOME_STAGE_LABELS).map(stage => html`
+          <div class="outcome-stage">
+            <div class="portfolio-label">${OUTCOME_STAGE_LABELS[stage]}</div>
+            <strong>${funnel[stage]?.count || 0}</strong>
+            <div class="evidence-meta">Drop-off: ${funnel[stage]?.drop_off ?? '—'}</div>
+          </div>
+        `)}
+      </div>
+      <section class="outcome-traces">
+        ${traces.length ? traces.map(trace => html`
+          <article class="outcome-trace">
+            <div class="outcome-trace-head">
+              <div>
+                <div class="portfolio-label">${trace.client_slug} · ${trace.project_contract?.project_id} · contract v${trace.project_contract?.version}</div>
+                <div class="evidence-title">${projectsById[trace.project_contract?.project_id]?.outcome_unit || 'Outcome unit unavailable from canonical portfolio'}</div>
+              </div>
+              <span class="portfolio-chip ${trace.acceptance?.status === 'accepted' ? 'verified' : 'unverified'}">${trace.acceptance?.status || 'unknown'}</span>
+            </div>
+            <div class="outcome-reference">Evidence reference: ${trace.acceptance?.evidence_source?.reference || 'not available'}</div>
+            <div class="outcome-reference">Provenance: ${trace.acceptance?.provenance?.system || 'not available'} · ${trace.acceptance?.provenance?.record_reference || 'not available'}</div>
+            <div class="outcome-reference">Reviewer: ${trace.acceptance?.reviewer?.reference || 'not available'} · observed ${trace.acceptance?.observed_at || 'not available'} · accepted ${trace.acceptance?.accepted_at || 'not available'}</div>
+            <div class="outcome-reference">Merged at: ${trace.stages?.merged?.occurred_at || 'not available'}</div>
+            <div class="outcome-reference">Accepted at: ${trace.stages?.accepted?.occurred_at || 'not available'} · status ${trace.acceptance?.status || 'unknown'}</div>
+          </article>
+        `) : html`<div class="portfolio-empty">No acceptance traces are instrumented. This does not imply zero accepted units.</div>`}
+      </section>
     </div>
   `;
 }
@@ -3266,6 +3339,7 @@ function App() {
 
   const queue = useFetch('/api/queue');
   const portfolio = useFetch('/api/portfolio');
+  const outcomes = useFetch('/api/outcome-funnel');
   const contextAudit = useFetch('/api/context-audit');
 
   // Deep linking: open issue from URL hash (#issue=repo/owner#123)
@@ -3325,6 +3399,7 @@ function App() {
 
   const counts = {
     portfolio: portfolio.data?.projects?.length || 0,
+    outcomes: outcomes.data?.funnel?.accepted?.count || 0,
     'context-audit': contextAudit.data?.summary?.threshold_findings || 0,
     kanban: (filteredQueue?.pending?.length || 0) + (filteredQueue?.in_progress?.length || 0) + (filteredQueue?.failed?.length || 0),
     agents: health.data?.worker_pools?.active_workers || 0,
@@ -3527,10 +3602,13 @@ function App() {
     <${Header} queue=${queue.data} />
     <${TabBar} active=${tab} onSwitch=${setTab} counts=${counts} />
     <div class="content">
-      ${tab !== 'portfolio' && tab !== 'context-audit' && html`<${StatsBar} queue=${queue.data} stats=${stats.data} />`}
-      ${tab !== 'portfolio' && tab !== 'context-audit' && html`<${RepoEligibilityAlerts} diagnostics=${diagnostics.data} repoFilter=${repoFilter} />`}
+      ${tab !== 'portfolio' && tab !== 'outcomes' && tab !== 'context-audit' && html`<${StatsBar} queue=${queue.data} stats=${stats.data} />`}
+      ${tab !== 'portfolio' && tab !== 'outcomes' && tab !== 'context-audit' && html`<${RepoEligibilityAlerts} diagnostics=${diagnostics.data} repoFilter=${repoFilter} />`}
       ${tab === 'portfolio' && html`
         <${PortfolioView} portfolio=${portfolio.data} loading=${portfolio.loading} error=${portfolio.error} />
+      `}
+      ${tab === 'outcomes' && html`
+        <${OutcomeFunnelView} outcomes=${outcomes.data} portfolio=${portfolio.data} loading=${outcomes.loading} error=${outcomes.error} />
       `}
       ${tab === 'context-audit' && html`
         <${ContextAuditView} audit=${contextAudit.data} loading=${contextAudit.loading} error=${contextAudit.error} />

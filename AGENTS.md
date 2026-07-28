@@ -46,6 +46,7 @@ A dashboard and orchestration layer for GitHub issues owned by [Coral Way Capita
 | `liveness.py` | Worker liveness classification (live/stale/dead) and safe stale-worker reaping. Two-signal model: heartbeat staleness + process check. Idempotent, audited, preserves recovery manifest. |
 | `pr_outcomes.py` | Idempotent PR engineering-state ledger, exact GitHub cycle times, conversion report, and restart-safe rolling 30-day backfill. |
 | `worker_evaluations.py` | Idempotent terminal-PR evaluation registry, weekly failure digest, and recommendation-only routing approval guard. |
+| `outcome_traces.py` | Read-only, references-only accepted-outcome trace validation, stage cycle times, and funnel drop-offs. |
 | `dashboard/index.html` | Single-file Preact SPA. Kanban board with clickable cards, issue detail modal, agent dispatch with prompt selector, activity timeline, metrics, guards, decompose tree. Dark/light mode. |
 | `prompts/` | Prompt template directory. Each `.md` file is a template with YAML frontmatter and `{{variable}}` placeholders. Drop new files to add prompt options. |
 | `cwc-issue-webhook.service` | systemd unit file for the webhook receiver. |
@@ -154,6 +155,7 @@ Your template with {{title}}, {{repo}}, {{local_path}},
 | `/api/context-audit` | Redacted read-only projection of the newest canonical repository-context baseline/delta |
 | `/api/pr-outcomes` | PR conversion, exact cycle times, state coverage, and explicit business-acceptance non-signal |
 | `/api/pr-outcomes?repo=X&number=N` | One PR outcome with dispatch, queue item, project, and structured-result links where available |
+| `/api/outcome-funnel?client=X` | Read-only project → issue → run → PR → reviewed → merged → accepted funnel and acceptance evidence provenance |
 | `/api/health` | Health check with queue counts |
 | `/health` | Simple health check |
 

@@ -11,6 +11,7 @@ from portfolio import (
     build_portfolio,
     score_project,
     validate_manifest,
+    outcome_contract,
 )
 
 
@@ -45,6 +46,16 @@ def project(project_id="alpha", ratings=None, evidence=None, **overrides):
         "wip_class": "client_outcome",
         "outcome_unit": "One accepted work unit",
         "finish_gate": "Client accepts the first work unit",
+        "evidence_requirement": [
+            "Reviewer confirmation reference",
+            "Redacted work-unit reference",
+        ],
+        "approval_boundary": {
+            "production": "required",
+            "spending": "required",
+            "client_communication": "required",
+            "acceptance_authority": "Named client reviewer",
+        },
         "dimensions": dimensions,
         "blockers": [
             {
@@ -75,7 +86,7 @@ def project(project_id="alpha", ratings=None, evidence=None, **overrides):
 
 def manifest(projects=None, weights=None):
     return {
-        "version": 1,
+        "version": 2,
         "policy": {
             "max_client_outcomes": 2,
             "max_strategic_experiments": 1,
@@ -141,6 +152,25 @@ class PortfolioScoreTests(unittest.TestCase):
         self.assertIn("Client access is pending", brief)
         self.assertIn("Evidence statuses", brief)
 
+    def test_dispatch_projection_carries_the_canonical_outcome_contract(self):
+        contract = outcome_contract(project())
+        self.assertEqual(
+            set(contract),
+            {
+                "contract_version",
+                "project_id",
+                "outcome_unit",
+                "finish_gate",
+                "evidence_requirement",
+                "approval_boundary",
+            },
+        )
+        self.assertEqual(contract["contract_version"], 2)
+        self.assertEqual(contract["project_id"], "alpha")
+        self.assertEqual(contract["outcome_unit"], "One accepted work unit")
+        self.assertTrue(contract["evidence_requirement"])
+        self.assertEqual(contract["approval_boundary"]["production"], "required")
+
 
 class PortfolioValidationTests(unittest.TestCase):
     def test_weights_must_total_one_hundred(self):
@@ -169,6 +199,19 @@ class PortfolioValidationTests(unittest.TestCase):
         invalid = project()
         invalid["dimensions"]["finishability"]["rating"] = 2.5
         with self.assertRaisesRegex(PortfolioError, "integer between 0 and 5"):
+            validate_manifest(manifest([invalid]))
+
+    def test_dispatch_contract_text_and_authority_must_be_non_empty_strings(self):
+        for field in ("outcome_unit", "finish_gate"):
+            invalid = project(**{field: " "})
+            with self.subTest(field=field), self.assertRaisesRegex(
+                PortfolioError, field
+            ):
+                validate_manifest(manifest([invalid]))
+
+        invalid = project()
+        invalid["approval_boundary"]["acceptance_authority"] = None
+        with self.assertRaisesRegex(PortfolioError, "acceptance_authority"):
             validate_manifest(manifest([invalid]))
 
         invalid_bool = project()
