@@ -68,6 +68,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import fcntl
 
 WORKER_RESULT_VERSION = 1
 TERMINAL_STATUSES = ("completed", "failed", "unknown")
@@ -75,7 +76,10 @@ RESOLVED_STATUSES = ("completed", "failed")
 
 # Dispatch id shape produced by the gateway: webhook:cwc-issue-dispatch:<id>.
 # We key idempotency on this; if it is absent we fall back to item_id.
-DISPATCH_ID_RE = re.compile(r"^webhook:cwc-issue-dispatch:")
+DISPATCH_ID_RE = re.compile(r"^webhook:cwc-issue-dispatch:[^:\s]+$")
+ITEM_ID_RE = re.compile(
+    r"^(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>[1-9][0-9]*)$"
+)
 
 # Default location for the results ledger. Mirrors issue_queue_db / events.
 BASE_DIR = Path.home() / ".hermes" / "issue-queue"
@@ -178,11 +182,14 @@ def validate_worker_result(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     dispatch_id = str(_require(payload.get("dispatch_id"), "dispatch_id")).strip()
-    if not DISPATCH_ID_RE.match(dispatch_id):
+    if len(dispatch_id) > 512 or not DISPATCH_ID_RE.fullmatch(dispatch_id):
         raise WorkerResultError(
-            "dispatch_id must start with 'webhook:cwc-issue-dispatch:'"
+            "dispatch_id must be a non-empty cwc-issue-dispatch identifier"
         )
-    item_id = _require(payload.get("item_id"), "item_id")
+    item_id = str(_require(payload.get("item_id"), "item_id")).strip()
+    item_match = ITEM_ID_RE.fullmatch(item_id)
+    if not item_match:
+        raise WorkerResultError("item_id must have the form owner/repo#number")
     status = str(_require(payload.get("status"), "status")).strip().lower()
     if status not in TERMINAL_STATUSES:
         raise WorkerResultError(
@@ -190,21 +197,41 @@ def validate_worker_result(payload: dict[str, Any]) -> dict[str, Any]:
         )
     occurred_at = str(_require(payload.get("occurred_at"), "occurred_at")).strip()
     try:
-        datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+        occurred = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
     except ValueError as exc:
         raise WorkerResultError("occurred_at must be an ISO-8601 timestamp") from exc
+    if occurred.tzinfo is None or occurred.utcoffset() is None:
+        raise WorkerResultError("occurred_at must include a timezone offset")
+
+    repo = payload.get("repo")
+    if repo is not None:
+        if not isinstance(repo, str) or repo != item_match.group("repo"):
+            raise WorkerResultError("repo must match item_id")
+    issue_number = payload.get("issue_number")
+    if issue_number is not None:
+        if (
+            isinstance(issue_number, bool)
+            or not isinstance(issue_number, int)
+            or issue_number != int(item_match.group("number"))
+        ):
+            raise WorkerResultError("issue_number must match item_id")
+    evidence = payload.get("evidence", {})
+    if not isinstance(evidence, dict):
+        raise WorkerResultError("evidence must be a JSON object")
+    if len(json.dumps(evidence, ensure_ascii=False, default=str).encode("utf-8")) > 65_536:
+        raise WorkerResultError("evidence exceeds 65536 bytes")
 
     normalized: dict[str, Any] = {
         "version": WORKER_RESULT_VERSION,
         "dispatch_id": dispatch_id,
-        "item_id": str(item_id),
-        "repo": payload.get("repo"),
-        "issue_number": payload.get("issue_number"),
+        "item_id": item_id,
+        "repo": repo,
+        "issue_number": issue_number,
         "session_id": payload.get("session_id"),
         "status": status,
         "pr_number": None,
         "error_summary": None,
-        "evidence": payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {},
+        "evidence": evidence,
         "source": str(payload.get("source") or "worker"),
         "occurred_at": str(occurred_at),
     }
@@ -216,6 +243,8 @@ def validate_worker_result(payload: dict[str, Any]) -> dict[str, Any]:
                 normalized["pr_number"] = int(pr_number)
             except (TypeError, ValueError) as exc:
                 raise WorkerResultError(f"pr_number must be an integer: {pr_number!r}") from exc
+            if isinstance(pr_number, bool) or normalized["pr_number"] <= 0:
+                raise WorkerResultError("pr_number must be a positive integer")
     elif status == "failed":
         normalized["error_summary"] = str(
             _require(payload.get("error_summary"), "error_summary (required for failed)")
@@ -250,7 +279,7 @@ def get_latest_result(dispatch_id: str | None, item_id: str | None,
             f"""
             SELECT * FROM worker_results
             WHERE {where} AND status IN ('completed','failed')
-            ORDER BY received_at DESC, id DESC LIMIT 1
+            ORDER BY received_at ASC, id ASC LIMIT 1
             """,
             tuple(params),
         ).fetchone()
@@ -301,6 +330,53 @@ def _insert_result(db: sqlite3.Connection, r: dict[str, Any]) -> int:
         ),
     )
     return cur.rowcount
+
+
+@contextmanager
+def _ingest_lock(db_path: Path | str):
+    """Serialize ledger + queue decisions across receiver threads/processes."""
+    lock_path = Path(db_path).with_suffix(Path(db_path).suffix + ".worker-results.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _first_resolved(db: sqlite3.Connection, dispatch_id: str) -> dict[str, Any] | None:
+    row = db.execute(
+        """
+        SELECT * FROM worker_results
+        WHERE dispatch_id = ? AND status IN ('completed','failed')
+        ORDER BY received_at ASC, id ASC LIMIT 1
+        """,
+        (dispatch_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _latest_any(db: sqlite3.Connection, dispatch_id: str) -> dict[str, Any] | None:
+    row = db.execute(
+        """
+        SELECT * FROM worker_results
+        WHERE dispatch_id = ?
+        ORDER BY received_at DESC, id DESC LIMIT 1
+        """,
+        (dispatch_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _same_outcome(previous: dict[str, Any], result: dict[str, Any]) -> bool:
+    if previous.get("status") != result.get("status"):
+        return False
+    if result.get("status") == "completed":
+        return previous.get("pr_number") == result.get("pr_number")
+    if result.get("status") == "failed":
+        return (previous.get("error_summary") or "") == (result.get("error_summary") or "")
+    return True
 
 
 # --------------------------------------------------------------------------- #
@@ -401,7 +477,8 @@ def _item_dispatch_id(item: dict[str, Any]) -> str | None:
 
 
 def apply_outcome_to_queue(result: dict[str, Any], queue: dict[str, Any],
-                           *, mutate: bool = True) -> dict[str, Any]:
+                           *, mutate: bool = True,
+                           require_dispatch_match: bool = True) -> dict[str, Any]:
     """Apply a validated result to an in-memory queue dict.
 
     Returns a summary dict describing what (if anything) changed. When
@@ -438,13 +515,13 @@ def apply_outcome_to_queue(result: dict[str, Any], queue: dict[str, Any],
         return summary
 
     current_dispatch_id = _item_dispatch_id(item)
-    if (
-        bucket == "in_progress"
-        and current_dispatch_id
-        and current_dispatch_id != result.get("dispatch_id")
-    ):
-        summary["dispatch_mismatch"] = True
-        return summary
+    if bucket == "in_progress":
+        if not current_dispatch_id and require_dispatch_match:
+            summary["dispatch_unverifiable"] = True
+            return summary
+        if current_dispatch_id and current_dispatch_id != result.get("dispatch_id"):
+            summary["dispatch_mismatch"] = True
+            return summary
 
     if bucket in ("completed", "failed"):
         # Already terminal. Detect no-op duplicates vs conflicting duplicates.
@@ -506,22 +583,6 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
     dispatch_id = result.get("dispatch_id")
     item_id = result["item_id"]
 
-    # Is there already a resolved result for this dispatch? If so this is a
-    # duplicate delivery; audit it without mutating the queue.
-    existing = get_latest_result(dispatch_id, item_id, db_path=db_path)
-    is_duplicate_resolved = bool(
-        existing and existing.get("status") in RESOLVED_STATUSES
-    )
-    previous = get_latest_result_any(dispatch_id, db_path=db_path)
-    is_exact_duplicate = bool(
-        previous and previous.get("status") == result.get("status")
-    )
-
-    # Persist (UNIQUE constraint makes this idempotent at the row level too).
-    with get_db(db_path) as db:
-        _insert_result(db, result)
-
-    # Load + mutate queue.
     if queue_loader is None:
         import queue as queue_mod  # type: ignore[import-not-found]
         queue_loader = queue_mod.load_queue
@@ -535,27 +596,58 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
             def event_logger(*a, **kw):  # type: ignore[misc]
                 pass
 
-    queue = queue_loader()
-    summary = apply_outcome_to_queue(result, queue, mutate=not is_duplicate_resolved)
-    should_record_trace = not (
-        is_duplicate_resolved
-        or is_exact_duplicate
-        or summary.get("already_terminal")
-        or summary.get("dispatch_mismatch")
-    )
+    # Serialize the first-terminal-wins decision. The result ledger shares its
+    # SQLite file with queue.save_queue's compatibility sync, so its write
+    # transaction must commit before queue_saver opens a second connection.
+    # Redelivery repairs either possible crash boundary: a ledger-only result
+    # may re-apply the same outcome, while an already-terminal queue item
+    # accepts the missing ledger row without another mutation.
+    with _ingest_lock(db_path):
+        db = _connect(db_path)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            existing = _first_resolved(db, dispatch_id)
+            previous = _latest_any(db, dispatch_id)
+            is_duplicate_resolved = bool(existing)
+            same_outcome = bool(existing and _same_outcome(existing, result))
+            conflict = bool(existing and not same_outcome)
+            is_exact_duplicate = bool(previous and _same_outcome(previous, result))
+
+            _insert_result(db, result)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+        queue = queue_loader()
+        # A same-outcome redelivery may repair a ledger/queue partial state. A
+        # conflicting terminal result never mutates the queue.
+        summary = apply_outcome_to_queue(
+            result, queue, mutate=not conflict
+        )
+        if summary.get("applied"):
+            queue_saver(queue)
+
+        should_record_trace = bool(summary.get("applied")) or not (
+            conflict
+            or is_exact_duplicate
+            or summary.get("already_terminal")
+            or summary.get("dispatch_mismatch")
+            or summary.get("dispatch_unverifiable")
+        )
+        if should_record_trace:
+            trace_item, _ = _find_in_progress_item(queue, item_id)
+            if trace_item is not None:
+                _record_terminal_trace(trace_item, result)
+
     if summary.get("applied"):
-        applied_item, _ = _find_in_progress_item(queue, item_id)
-        queue_saver(queue)
-        _record_terminal_trace(applied_item or {}, result)
         try:
             import queue as queue_mod  # type: ignore[import-not-found]
             queue_mod._pool_cleanup(item_id)
         except Exception:
             pass
-    if should_record_trace:
-        trace_item, _ = _find_in_progress_item(queue, item_id)
-        if trace_item is not None:
-            _record_terminal_trace(trace_item, result)
 
     # Auditable event log. Always emit something so duplicate delivery is visible.
     event_type = "worker_result.duplicate" if (
@@ -577,6 +669,7 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
             "applied": summary.get("applied"),
             "already_terminal": summary.get("already_terminal"),
             "same_outcome": summary.get("same_outcome"),
+            "conflict": conflict,
             "version": WORKER_RESULT_VERSION,
         },
         source=result.get("source") or "worker",
@@ -588,6 +681,7 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
             is_duplicate_resolved or is_exact_duplicate or summary.get("already_terminal")
         ),
         "same_outcome": summary.get("same_outcome"),
+        "conflict": conflict,
         "applied": summary.get("applied"),
         "already_terminal": summary.get("already_terminal"),
         "result": _public_result(result),
@@ -665,11 +759,11 @@ def scan_session_files(traces_root: Path, queue: dict[str, Any] | None = None) -
         final_text = _trace_final_text(trace_dir)
         if not status and final_text:
             low = final_text.lower()
-            if re.search(r"\bPR\s*#\d+\b", final_text, re.IGNORECASE):
-                status = "completed"
-            elif low.startswith(("failed", "error:")):
+            if low.startswith(("failed", "error:")):
                 status = "failed"
             else:
+                # A PR mention is not proof that the dispatch succeeded: it
+                # can describe pending, failed, or unrelated work.
                 status = "unknown"
         if status is None:
             continue

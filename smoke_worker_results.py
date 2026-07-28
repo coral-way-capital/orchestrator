@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import atexit
+from copy import deepcopy
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote
@@ -22,6 +23,7 @@ atexit.register(shutil.rmtree, _TEST_HOME, ignore_errors=True)
 
 import agent_traces
 import backfill_report
+import queue as queue_mod
 import webhook_receiver
 import worker_results
 
@@ -50,6 +52,19 @@ def test_contract_requires_version_dispatch_and_timestamp():
             pass
         else:
             raise AssertionError(f"{field} must be required")
+
+
+def test_contract_rejects_uncorrelatable_dispatch_and_naive_timestamp():
+    for payload in (
+        _payload(dispatch_id="webhook:cwc-issue-dispatch:"),
+        _payload(occurred_at="2026-07-27T12:00:00"),
+    ):
+        try:
+            worker_results.validate_worker_result(payload)
+        except worker_results.WorkerResultError:
+            pass
+        else:
+            raise AssertionError("uncorrelatable result must be rejected")
 
 
 def test_receiver_auth_fails_closed_and_accepts_signed_payload():
@@ -148,6 +163,19 @@ def test_signed_http_result_updates_state_under_five_seconds_and_audits_duplicat
             conn.close()
             assert response.status == 200, listed
             assert len(listed["results"]) == 1
+
+            conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=2)
+            oversized = b"x" * (webhook_receiver.MAX_WORKER_RESULT_BODY + 1)
+            conn.request(
+                "POST",
+                "/api/worker-result",
+                body=oversized,
+                headers={"Content-Type": "application/json"},
+            )
+            response = conn.getresponse()
+            rejected = json.loads(response.read())
+            conn.close()
+            assert response.status == 413, rejected
         finally:
             server.shutdown()
             server.server_close()
@@ -171,6 +199,21 @@ def test_session_fallback_never_infers_success_from_ambiguous_text():
     report = backfill_report.build_report(queue, session_candidates=candidates)
     assert report["unknown"][0]["evidence_sources"] == ["session_file"]
     assert "review is pending" in report["unknown"][0]["evidence"]["final_text"]
+
+
+def test_session_fallback_never_infers_success_from_pr_text_alone():
+    queue = {
+        "in_progress": [{"id": _payload()["item_id"], "repo": "coral-way-capital/demo", "issue_number": 15}],
+    }
+    with tempfile.TemporaryDirectory() as td:
+        trace = Path(td) / "coral-way-capital_demo_15"
+        trace.mkdir()
+        (trace / "final.txt").write_text(
+            "I found PR #115, but its checks are failing and the work is incomplete.",
+            encoding="utf-8",
+        )
+        candidates = worker_results.scan_session_files(Path(td), queue=queue)
+    assert candidates[0]["status"] == "unknown"
 
 
 def test_stale_dispatch_result_cannot_finish_newer_dispatch():
@@ -213,6 +256,196 @@ def test_backfill_preserves_unknown_session_file_evidence():
     assert report["summary"]["unknown"] == 1
     assert report["unknown"][0]["evidence_sources"] == ["session_file"]
     assert report["unknown"][0]["evidence"]["final_text"].startswith("The change")
+
+
+def test_result_without_active_dispatch_correlation_cannot_finish_item():
+    item = {"id": _payload()["item_id"]}
+    queue = {"pending": [], "in_progress": [item], "completed": [], "failed": []}
+    summary = worker_results.apply_outcome_to_queue(
+        worker_results.validate_worker_result(_payload()), queue
+    )
+    assert summary["dispatch_unverifiable"] is True
+    assert queue["in_progress"] == [item]
+    assert queue["completed"] == []
+
+
+def test_retry_repairs_queue_after_interrupted_first_delivery():
+    persisted = {
+        "pending": [],
+        "in_progress": [{
+            "id": _payload()["item_id"],
+            "dispatch_id": _payload()["dispatch_id"],
+        }],
+        "completed": [],
+        "failed": [],
+    }
+    fail_first_save = True
+
+    def load():
+        return deepcopy(persisted)
+
+    def save(queue):
+        nonlocal fail_first_save, persisted
+        if fail_first_save:
+            fail_first_save = False
+            raise OSError("simulated interrupted queue save")
+        persisted = deepcopy(queue)
+
+    with tempfile.TemporaryDirectory() as td:
+        kwargs = {
+            "source": "worker_api",
+            "db_path": Path(td) / "results.db",
+            "queue_loader": load,
+            "queue_saver": save,
+            "event_logger": lambda *args, **kwargs: None,
+        }
+        try:
+            worker_results.ingest_worker_result(_payload(), **kwargs)
+        except OSError:
+            pass
+        else:
+            raise AssertionError("first interrupted delivery must fail")
+        result = worker_results.ingest_worker_result(_payload(), **kwargs)
+
+    assert result["applied"] is True
+    assert persisted["in_progress"] == []
+    assert persisted["completed"][0]["pr_number"] == 115
+
+
+def test_real_queue_and_shared_sqlite_ledger_update_under_five_seconds():
+    payload = _payload(
+        dispatch_id="webhook:cwc-issue-dispatch:shared-db",
+        item_id="coral-way-capital/demo#99",
+        issue_number=99,
+        repo="coral-way-capital/demo",
+    )
+    queue_mod.save_queue({
+        "pending": [],
+        "in_progress": [{
+            "id": payload["item_id"],
+            "repo": payload["repo"],
+            "issue_number": payload["issue_number"],
+            "dispatch_id": payload["dispatch_id"],
+        }],
+        "completed": [],
+        "failed": [],
+    })
+    started = time.monotonic()
+    result = worker_results.ingest_worker_result(
+        payload,
+        source="worker_api",
+        event_logger=lambda *args, **kwargs: None,
+    )
+    elapsed = time.monotonic() - started
+    saved = queue_mod.load_queue()
+
+    assert result["applied"] is True
+    assert elapsed < 5.0, elapsed
+    assert saved["completed"][0]["id"] == payload["item_id"]
+
+
+def test_conflicting_duplicate_cannot_repair_or_mutate_queue():
+    persisted = {
+        "pending": [],
+        "in_progress": [{
+            "id": _payload()["item_id"],
+            "dispatch_id": _payload()["dispatch_id"],
+        }],
+        "completed": [],
+        "failed": [],
+    }
+
+    def load():
+        return deepcopy(persisted)
+
+    def save(queue):
+        nonlocal persisted
+        persisted = deepcopy(queue)
+
+    with tempfile.TemporaryDirectory() as td:
+        kwargs = {
+            "source": "worker_api",
+            "db_path": Path(td) / "results.db",
+            "queue_loader": load,
+            "queue_saver": save,
+            "event_logger": lambda *args, **kwargs: None,
+        }
+        worker_results.ingest_worker_result(_payload(), **kwargs)
+        persisted["completed"].clear()
+        persisted["in_progress"] = [{
+            "id": _payload()["item_id"],
+            "dispatch_id": _payload()["dispatch_id"],
+        }]
+        result = worker_results.ingest_worker_result(
+            _payload(pr_number=999), **kwargs
+        )
+
+    assert result["duplicate"] is True
+    assert result["conflict"] is True
+    assert result["applied"] is False
+    assert persisted["in_progress"]
+    assert persisted["completed"] == []
+
+
+def test_concurrent_conflicting_results_have_one_winner():
+    persisted = {
+        "pending": [],
+        "in_progress": [{
+            "id": _payload()["item_id"],
+            "dispatch_id": _payload()["dispatch_id"],
+        }],
+        "completed": [],
+        "failed": [],
+    }
+    responses = []
+    errors = []
+    start = threading.Barrier(3)
+
+    def load():
+        return deepcopy(persisted)
+
+    def save(queue):
+        nonlocal persisted
+        persisted = deepcopy(queue)
+
+    with tempfile.TemporaryDirectory() as td:
+        kwargs = {
+            "source": "worker_api",
+            "db_path": Path(td) / "results.db",
+            "queue_loader": load,
+            "queue_saver": save,
+            "event_logger": lambda *args, **kwargs: None,
+        }
+
+        def submit(payload):
+            try:
+                start.wait()
+                responses.append(worker_results.ingest_worker_result(payload, **kwargs))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=submit, args=(_payload(),)),
+            threading.Thread(target=submit, args=(_payload(
+                status="failed",
+                pr_number=None,
+                error_summary="deterministic failure",
+            ),)),
+        ]
+        for thread in threads:
+            thread.start()
+        start.wait()
+        for thread in threads:
+            thread.join(timeout=5)
+
+    assert errors == []
+    assert len(responses) == 2
+    assert sum(bool(response["applied"]) for response in responses) == 1
+    assert sum(bool(response["conflict"]) for response in responses) == 1
+    assert len(persisted["completed"]) + len(persisted["failed"]) == 1
+    winner = next(response for response in responses if response["applied"])
+    expected_bucket = "completed" if winner["result"]["status"] == "completed" else "failed"
+    assert len(persisted[expected_bucket]) == 1
 
 
 def test_backfill_separates_resolved_and_unknown_with_evidence():
@@ -368,15 +601,38 @@ def test_backfill_uses_legacy_telemetry_dispatch_id_and_apply_preserves_unknown(
     assert queue["completed"][0]["pr_number"] == 118
 
 
+def test_backfill_does_not_resolve_new_dispatch_from_old_item_result():
+    item = {
+        "id": _payload()["item_id"],
+        "dispatch_id": "webhook:cwc-issue-dispatch:new",
+    }
+    report = backfill_report.build_report(
+        {"in_progress": [item]},
+        worker_results_rows=[
+            _payload(dispatch_id="webhook:cwc-issue-dispatch:old")
+        ],
+    )
+    assert report["resolved"] == []
+    assert report["unknown"][0]["resolved_status"] == "unknown"
+
+
 if __name__ == "__main__":
     test_contract_requires_version_dispatch_and_timestamp()
+    test_contract_rejects_uncorrelatable_dispatch_and_naive_timestamp()
     test_receiver_auth_fails_closed_and_accepts_signed_payload()
     test_signed_http_result_updates_state_under_five_seconds_and_audits_duplicate()
     test_session_fallback_never_infers_success_from_ambiguous_text()
+    test_session_fallback_never_infers_success_from_pr_text_alone()
     test_stale_dispatch_result_cannot_finish_newer_dispatch()
     test_backfill_preserves_unknown_session_file_evidence()
+    test_result_without_active_dispatch_correlation_cannot_finish_item()
+    test_retry_repairs_queue_after_interrupted_first_delivery()
+    test_real_queue_and_shared_sqlite_ledger_update_under_five_seconds()
+    test_conflicting_duplicate_cannot_repair_or_mutate_queue()
+    test_concurrent_conflicting_results_have_one_winner()
     test_backfill_separates_resolved_and_unknown_with_evidence()
     test_apply_report_handles_resolved_entry_without_dispatch_id()
     test_structured_result_updates_agent_trace_metadata()
     test_backfill_uses_legacy_telemetry_dispatch_id_and_apply_preserves_unknown()
+    test_backfill_does_not_resolve_new_dispatch_from_old_item_result()
     print("ok")

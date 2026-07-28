@@ -83,6 +83,7 @@ MAX_DECOMPOSE_PENDING = 10
 DEFAULT_DISPATCH_PROVIDER = os.environ.get("CWC_DISPATCH_PROVIDER", "openai-codex")
 DEFAULT_DISPATCH_MODEL = os.environ.get("CWC_DISPATCH_MODEL", "gpt-5.5")
 BLOCKED_DISPATCH_MODELS = {"glm-5-turbo"}
+MAX_WORKER_RESULT_BODY = 262_144
 
 
 def trigger_dispatcher_async(reason="enqueue"):
@@ -330,7 +331,22 @@ def load_queue_json():
 class IssueWebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(self.path.split("?")[0])
-        content_length = int(self.headers.get("Content-Length", 0))
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            self._json_response({"error": "Invalid Content-Length"}, 400)
+            return
+        if content_length < 0:
+            self._json_response({"error": "Invalid Content-Length"}, 400)
+            return
+        if path == "/api/worker-result":
+            if content_length > MAX_WORKER_RESULT_BODY:
+                self._json_response({"error": "Worker result body too large"}, 413)
+                return
+            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if content_type != "application/json":
+                self._json_response({"error": "Content-Type must be application/json"}, 415)
+                return
         raw_body = self.rfile.read(content_length)
 
         # API dispatch route
@@ -575,6 +591,14 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 outcome = ingest_worker_result(payload, source="worker_api")
             except WorkerResultError as e:
                 self._json_response({"error": str(e), "ok": False}, 422)
+                return
+            except Exception as e:
+                log_event(
+                    "worker_result.error",
+                    details={"error": str(e)[:500], "path": path},
+                    source="worker_api",
+                )
+                self._json_response({"error": "Worker result could not be persisted", "ok": False}, 500)
                 return
             self._json_response(outcome, 200)
             return

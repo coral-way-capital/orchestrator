@@ -121,7 +121,7 @@ def build_report(
         wr = None
         if dispatch_id and dispatch_id in wr_by_dispatch:
             wr = wr_by_dispatch[dispatch_id]
-        elif item_id in wr_by_item:
+        elif not dispatch_id and item_id in wr_by_item:
             wr = wr_by_item[item_id]
         if wr:
             entry["evidence_sources"].append("worker_result")
@@ -216,7 +216,12 @@ def apply_report(report: dict[str, Any], queue: dict[str, Any]) -> dict[str, Any
             "error_summary": entry.get("error_summary"),
             "occurred_at": report.get("generated_at") or now_iso(),
         }
-        summary = apply_outcome_to_queue(result, queue, mutate=True)
+        summary = apply_outcome_to_queue(
+            result,
+            queue,
+            mutate=True,
+            require_dispatch_match=False,
+        )
         if summary.get("applied"):
             bucket = "completed" if result["status"] == "completed" else "failed"
             moved[bucket] += 1
