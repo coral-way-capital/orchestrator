@@ -35,7 +35,6 @@ from typing import Any
 from worker_results import (
     apply_outcome_to_queue,
     scan_session_files,
-    validate_worker_result,
 )
 
 
@@ -88,9 +87,19 @@ def build_report(
 
     sess_by_item: dict[str, dict[str, Any]] = {}
     for cand in session_candidates:
-        if cand.get("status") not in ("completed", "failed"):
+        status = cand.get("status")
+        if status not in ("completed", "failed", "unknown"):
             continue
-        sess_by_item.setdefault(cand["item_id"], cand)
+        item_id = cand.get("item_id")
+        if not item_id:
+            continue
+        # Preserve unknown session evidence, but prefer resolved evidence if both
+        # exist for the same item.
+        existing = sess_by_item.get(str(item_id))
+        if existing and existing.get("status") in ("completed", "failed"):
+            continue
+        if not existing or status in ("completed", "failed"):
+            sess_by_item[str(item_id)] = cand
 
     resolved: list[dict[str, Any]] = []
     unknown: list[dict[str, Any]] = []
@@ -189,16 +198,24 @@ def apply_report(report: dict[str, Any], queue: dict[str, Any]) -> dict[str, Any
     """
     moved = {"completed": 0, "failed": 0, "unchanged": 0, "unknown_preserved": 0}
     for entry in report.get("resolved", []):
+        status = entry.get("resolved_status")
+        item_id = entry.get("item_id")
+        if status not in ("completed", "failed") or not item_id:
+            moved["unchanged"] += 1
+            continue
+        # Backfill evidence can come from legacy/session records that predate
+        # dispatch telemetry. The public worker-result contract remains strict,
+        # but applying historical evidence should not abort solely because a
+        # legacy queue entry has no dispatch_id.
         result = {
             "version": 1,
             "dispatch_id": entry.get("dispatch_id"),
-            "item_id": entry["item_id"],
-            "status": entry["resolved_status"],
+            "item_id": item_id,
+            "status": status,
             "pr_number": entry.get("pr_number"),
             "error_summary": entry.get("error_summary"),
             "occurred_at": report.get("generated_at") or now_iso(),
         }
-        result = validate_worker_result(result)
         summary = apply_outcome_to_queue(result, queue, mutate=True)
         if summary.get("applied"):
             bucket = "completed" if result["status"] == "completed" else "failed"

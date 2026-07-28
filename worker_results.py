@@ -324,6 +324,73 @@ def _move_to_terminal(queue: dict[str, Any], item: dict[str, Any], source_bucket
     queue.setdefault(target_bucket, []).append(item)
 
 
+def _terminal_trace_text(result: dict[str, Any]) -> str:
+    if result.get("status") == "completed":
+        pr_number = result.get("pr_number")
+        return f"PR #{pr_number}" if pr_number else "completed"
+    return result.get("error_summary") or result.get("status") or "unknown"
+
+
+def _record_terminal_trace(item: dict[str, Any], result: dict[str, Any]) -> None:
+    """Mirror structured terminal results into trace files and agent_traces."""
+    try:
+        from agent_traces import ensure_trace_bundle, get_latest_trace_for_item, upsert_trace
+
+        item_id = item.get("id") or result.get("item_id")
+        if not item_id:
+            return
+        finished_at = result.get("occurred_at") or result.get("received_at") or now_iso()
+        trace_paths = ensure_trace_bundle(item_id)
+
+        final_text = _terminal_trace_text(result)
+        trace_paths["final_txt"].write_text(final_text, encoding="utf-8")
+
+        meta_path = trace_paths["meta_json"]
+        meta: dict[str, Any] = {}
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+        meta.update({
+            "status": result.get("status"),
+            "finished_at": finished_at,
+            "worker_result_received_at": result.get("received_at") or now_iso(),
+            "worker_result_status": result.get("status"),
+            "worker_result_dispatch_id": result.get("dispatch_id"),
+            "worker_result_pr_number": result.get("pr_number"),
+            "worker_result_error_summary": result.get("error_summary"),
+            "worker_result_source": result.get("source"),
+        })
+        meta_path.write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
+
+        existing = get_latest_trace_for_item(item_id)
+        fields = {
+            "item_id": item_id,
+            "repo": item.get("repo") or result.get("repo"),
+            "issue_number": item.get("issue_number") or result.get("issue_number"),
+            "session_id": item.get("session_id") or result.get("session_id"),
+            "dispatch_id": result.get("dispatch_id") or _item_dispatch_id(item),
+            "status": result.get("status"),
+            "finished_at": finished_at,
+            "pr_number": result.get("pr_number"),
+            "exit_reason": "worker_result",
+            "error_summary": result.get("error_summary"),
+            "trace_dir": str(trace_paths["trace_dir"]),
+        }
+        if existing and existing.get("id"):
+            fields["id"] = existing["id"]
+            for key in (
+                "started_at", "model_provider", "model", "prompt_id",
+                "log_path", "transcript_path",
+            ):
+                if existing.get(key) is not None:
+                    fields[key] = existing.get(key)
+        upsert_trace(**fields)
+    except Exception:
+        pass
+
+
 def _item_dispatch_id(item: dict[str, Any]) -> str | None:
     if item.get("dispatch_id"):
         return str(item["dispatch_id"])
@@ -469,6 +536,12 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
 
     queue = queue_loader()
     summary = apply_outcome_to_queue(result, queue, mutate=not is_duplicate_resolved)
+    should_record_trace = not (
+        is_duplicate_resolved
+        or is_exact_duplicate
+        or summary.get("already_terminal")
+        or summary.get("dispatch_mismatch")
+    )
     if summary.get("applied"):
         queue_saver(queue)
         try:
@@ -476,6 +549,10 @@ def ingest_worker_result(payload: dict[str, Any], *, source: str = "worker",
             queue_mod._pool_cleanup(item_id)
         except Exception:
             pass
+    if should_record_trace:
+        trace_item, _ = _find_in_progress_item(queue, item_id)
+        if trace_item is not None:
+            _record_terminal_trace(trace_item, result)
 
     # Auditable event log. Always emit something so duplicate delivery is visible.
     event_type = "worker_result.duplicate" if (

@@ -20,6 +20,7 @@ _TEST_HOME = tempfile.mkdtemp(prefix="orchestrator-worker-results-")
 os.environ["HOME"] = _TEST_HOME
 atexit.register(shutil.rmtree, _TEST_HOME, ignore_errors=True)
 
+import agent_traces
 import backfill_report
 import webhook_receiver
 import worker_results
@@ -178,6 +179,35 @@ def test_stale_dispatch_result_cannot_finish_newer_dispatch():
     assert queue["completed"] == []
 
 
+def test_backfill_preserves_unknown_session_file_evidence():
+    item_id = "coral-way-capital/demo#18"
+    queue = {
+        "in_progress": [{
+            "id": item_id,
+            "repo": "coral-way-capital/demo",
+            "issue_number": 18,
+            "dispatch_id": "webhook:cwc-issue-dispatch:ambiguous",
+        }],
+    }
+    report = backfill_report.build_report(
+        queue,
+        session_candidates=[{
+            "version": 1,
+            "dispatch_id": "webhook:cwc-issue-dispatch:ambiguous",
+            "item_id": item_id,
+            "repo": "coral-way-capital/demo",
+            "issue_number": 18,
+            "status": "unknown",
+            "error_summary": "The change is not merged; review is pending.",
+            "occurred_at": "2026-07-27T12:00:00+00:00",
+            "evidence": {"final_text": "The change is not merged; review is pending."},
+        }],
+    )
+    assert report["summary"]["unknown"] == 1
+    assert report["unknown"][0]["evidence_sources"] == ["session_file"]
+    assert report["unknown"][0]["evidence"]["final_text"].startswith("The change")
+
+
 def test_backfill_separates_resolved_and_unknown_with_evidence():
     resolved_item = {
         "id": "coral-way-capital/demo#15",
@@ -219,6 +249,74 @@ def test_backfill_separates_resolved_and_unknown_with_evidence():
     }
 
 
+def test_apply_report_handles_resolved_entry_without_dispatch_id():
+    item_id = "coral-way-capital/demo#19"
+    queue = {
+        "pending": [],
+        "in_progress": [{"id": item_id, "repo": "coral-way-capital/demo", "issue_number": 19}],
+        "completed": [],
+        "failed": [],
+    }
+    report = {
+        "generated_at": "2026-07-27T12:00:00+00:00",
+        "resolved": [{
+            "item_id": item_id,
+            "dispatch_id": None,
+            "resolved_status": "completed",
+            "pr_number": 119,
+        }],
+        "unknown": [],
+    }
+    moved = backfill_report.apply_report(report, queue)
+    assert moved["completed"] == 1
+    assert queue["completed"][0]["pr_number"] == 119
+
+
+def test_structured_result_updates_agent_trace_metadata():
+    item_id = "coral-way-capital/demo#20"
+    dispatch_id = "webhook:cwc-issue-dispatch:trace"
+    trace = agent_traces.upsert_trace(
+        item_id=item_id,
+        repo="coral-way-capital/demo",
+        issue_number=20,
+        dispatch_id=dispatch_id,
+        status="dispatched",
+        started_at="2026-07-27T11:59:00+00:00",
+        model_provider="openai-codex",
+        model="gpt-5.5",
+        prompt_id="default",
+    )
+    queue_state = {
+        "pending": [],
+        "in_progress": [{
+            "id": item_id,
+            "repo": "coral-way-capital/demo",
+            "issue_number": 20,
+            "dispatch_id": dispatch_id,
+        }],
+        "completed": [],
+        "failed": [],
+    }
+    events = []
+    with tempfile.TemporaryDirectory() as td:
+        worker_results.ingest_worker_result(
+            _payload(item_id=item_id, issue_number=20, dispatch_id=dispatch_id, pr_number=120),
+            db_path=Path(td) / "results.db",
+            queue_loader=lambda: queue_state,
+            queue_saver=lambda queue: None,
+            event_logger=lambda event_type, **kwargs: events.append((event_type, kwargs)),
+        )
+    updated = agent_traces.get_latest_trace_for_item(item_id)
+    assert updated["id"] == trace["id"]
+    assert updated["status"] == "completed"
+    assert updated["pr_number"] == 120
+    assert updated["exit_reason"] == "worker_result"
+    meta = json.loads(agent_traces.bundle_paths(item_id)["meta_json"].read_text(encoding="utf-8"))
+    assert meta["worker_result_status"] == "completed"
+    assert meta["worker_result_pr_number"] == 120
+    assert agent_traces.bundle_paths(item_id)["final_txt"].read_text(encoding="utf-8") == "PR #120"
+
+
 def test_backfill_uses_legacy_telemetry_dispatch_id_and_apply_preserves_unknown():
     item = {
         "id": "coral-way-capital/demo#17",
@@ -249,6 +347,9 @@ if __name__ == "__main__":
     test_signed_http_result_updates_state_under_five_seconds_and_audits_duplicate()
     test_session_fallback_never_infers_success_from_ambiguous_text()
     test_stale_dispatch_result_cannot_finish_newer_dispatch()
+    test_backfill_preserves_unknown_session_file_evidence()
     test_backfill_separates_resolved_and_unknown_with_evidence()
+    test_apply_report_handles_resolved_entry_without_dispatch_id()
+    test_structured_result_updates_agent_trace_metadata()
     test_backfill_uses_legacy_telemetry_dispatch_id_and_apply_preserves_unknown()
     print("ok")
