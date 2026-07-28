@@ -42,6 +42,7 @@ from worker_results import (
     ingest_worker_result,
     list_results as list_worker_results,
 )
+from portfolio import PortfolioError, build_advice_brief, get_project, load_portfolio
 try:
     import issue_queue_db
 except Exception:
@@ -749,6 +750,35 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             params = parse_qs(urlparse(self.path).query)
             item_id = params.get("item_id", [None])[0]
             self._json_response({"results": list_worker_results(item_id=item_id)})
+        elif path == "/api/portfolio" or path.startswith("/api/portfolio/"):
+            try:
+                portfolio = load_portfolio()
+                if path == "/api/portfolio":
+                    self._json_response(portfolio)
+                    return
+                suffix = path[len("/api/portfolio/"):].strip("/")
+                wants_brief = suffix.endswith("/brief")
+                project_id = suffix[:-len("/brief")].strip("/") if wants_brief else suffix
+                project = get_project(portfolio, project_id)
+                if not project:
+                    self._json_response({"error": "portfolio project not found", "project_id": project_id}, 404)
+                    return
+                if wants_brief:
+                    self._json_response({
+                        "project_id": project_id,
+                        "brief": build_advice_brief(project),
+                        "generated_at": portfolio.get("generated_at"),
+                    })
+                    return
+                self._json_response(project)
+                return
+            except PortfolioError as exc:
+                self._json_response({
+                    "error": "portfolio unavailable",
+                    "detail": str(exc),
+                    "projects": [],
+                }, 503)
+                return
         elif path == "/api/queue":
             self._json_response(self._queue_with_eligibility())
         elif path == "/api/queue-enriched":

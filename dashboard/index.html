@@ -1,15 +1,16 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CWC Mission Control</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   /* ═══ CWC Design Tokens — Light (default) ═══ */
   :root {
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
     /* Surfaces */
     --bg:                       #fafafa;
     --bg-nav:                   rgba(250,250,250,0.85);
@@ -153,6 +154,7 @@
     font-size: 1.1rem;
     font-weight: 600;
     letter-spacing: -0.02em;
+    white-space: nowrap;
   }
   .logo-mark {
     display: inline-block;
@@ -262,7 +264,7 @@
   /* ═══ Content ═══ */
   .content {
     padding: 1.5rem 2rem;
-    max-width: 900px;
+    max-width: 1200px;
     margin: 0 auto;
   }
 
@@ -685,6 +687,282 @@
     padding: 4rem 2rem;
     color: var(--text-dim);
     font-size: 0.85rem;
+  }
+
+  /* ═══ Portfolio Scorecard ═══ */
+  .portfolio-view { animation: fadeSlideIn 0.25s ease both; }
+  .portfolio-hero {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    justify-content: space-between;
+    gap: 2rem;
+    align-items: flex-end;
+    padding: 2rem;
+    margin-bottom: 1rem;
+    background: var(--card-bg-accent);
+    border: 1px solid var(--border-accent);
+    border-radius: 16px;
+    box-shadow: var(--shadow-md);
+  }
+  .portfolio-hero::after {
+    content: '';
+    position: absolute;
+    width: 280px;
+    height: 280px;
+    right: -100px;
+    top: -160px;
+    border-radius: 50%;
+    background: var(--gradient);
+    filter: blur(80px);
+    opacity: 0.13;
+    pointer-events: none;
+  }
+  .portfolio-eyebrow,
+  .portfolio-label {
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+  .portfolio-hero h1 {
+    font-size: clamp(1.75rem, 4vw, 2.5rem);
+    line-height: 1.08;
+    letter-spacing: -0.035em;
+    margin: 0.65rem 0;
+    max-width: 700px;
+  }
+  .portfolio-hero p {
+    color: var(--text-secondary);
+    max-width: 720px;
+    font-size: 0.9rem;
+  }
+  .portfolio-asof {
+    position: relative;
+    z-index: 1;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .wip-strip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--status-live-border);
+    background: var(--status-live-bg);
+    border-radius: 10px;
+    color: var(--status-live-text);
+    font-size: 0.78rem;
+  }
+  .wip-strip.violation {
+    border-color: color-mix(in srgb, var(--color-fail) 35%, transparent);
+    background: color-mix(in srgb, var(--color-fail) 8%, transparent);
+    color: var(--color-fail);
+  }
+  .wip-strip strong { color: var(--text); }
+  .portfolio-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .portfolio-stat {
+    padding: 1rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .portfolio-stat-value {
+    margin-top: 0.35rem;
+    font-size: 1.65rem;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: -0.035em;
+  }
+  .portfolio-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.65fr);
+    gap: 1rem;
+    align-items: start;
+  }
+  .portfolio-ranking,
+  .portfolio-detail {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1rem;
+  }
+  .portfolio-ranking-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+  }
+  .project-rank-card {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 30px 1fr auto;
+    gap: 0.65rem;
+    align-items: center;
+    padding: 0.8rem;
+    margin-bottom: 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    font-family: inherit;
+  }
+  .project-rank-card:hover,
+  .project-rank-card.active {
+    border-color: var(--border-accent-strong);
+    background: var(--card-bg-accent-hover);
+    transform: translateY(-1px);
+  }
+  .project-rank-number {
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    font-size: 0.7rem;
+  }
+  .project-rank-name { display: block; font-size: 0.82rem; font-weight: 600; }
+  .project-rank-client {
+    display: block;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-top: 0.12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .project-rank-meta { display: flex; gap: 0.3rem; margin-top: 0.45rem; flex-wrap: wrap; }
+  .portfolio-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.16rem 0.4rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    background: var(--card-bg);
+    font-family: var(--font-mono);
+    font-size: 0.56rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .portfolio-chip.verified,
+  .portfolio-chip.measured,
+  .portfolio-chip.scale { color: var(--color-done); border-color: color-mix(in srgb, var(--color-done) 35%, transparent); }
+  .portfolio-chip.modelled,
+  .portfolio-chip.finish,
+  .portfolio-chip.fix { color: var(--color-progress); border-color: color-mix(in srgb, var(--color-progress) 35%, transparent); }
+  .portfolio-chip.unverified,
+  .portfolio-chip.escalate,
+  .portfolio-chip.pause,
+  .portfolio-chip.stale { color: var(--color-fail); border-color: color-mix(in srgb, var(--color-fail) 35%, transparent); }
+  .project-score {
+    min-width: 48px;
+    text-align: right;
+    font-size: 1.45rem;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+  }
+  .project-score small { display: block; font-size: 0.55rem; color: var(--text-dim); font-weight: 400; letter-spacing: 0; }
+  .portfolio-detail { min-height: 520px; }
+  .portfolio-detail-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .portfolio-detail h2 {
+    margin: 0.25rem 0 0;
+    font-size: 1.45rem;
+    letter-spacing: -0.025em;
+  }
+  .portfolio-detail-client { color: var(--text-muted); font-size: 0.75rem; margin-top: 0.2rem; }
+  .portfolio-detail-score { text-align: right; }
+  .portfolio-detail-score strong { display: block; font-size: 2.2rem; line-height: 1; letter-spacing: -0.05em; }
+  .portfolio-detail-score span { font-size: 0.62rem; color: var(--text-muted); }
+  .portfolio-decision {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin: 1rem 0;
+  }
+  .portfolio-decision-card {
+    padding: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+  }
+  .portfolio-decision-card p { margin-top: 0.35rem; font-size: 0.8rem; color: var(--text-secondary); line-height: 1.55; }
+  .portfolio-section { margin-top: 1.15rem; }
+  .portfolio-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.65rem;
+  }
+  .dimension-row {
+    display: grid;
+    grid-template-columns: minmax(150px, 1.15fr) 2fr 38px;
+    gap: 0.65rem;
+    align-items: center;
+    padding: 0.38rem 0;
+  }
+  .dimension-name { font-size: 0.72rem; color: var(--text-secondary); }
+  .dimension-track { height: 6px; border-radius: 999px; background: var(--border-lighter); overflow: hidden; }
+  .dimension-fill { height: 100%; border-radius: inherit; background: var(--gradient); }
+  .dimension-value { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-muted); text-align: right; }
+  .blocker-item,
+  .evidence-item {
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--border-light);
+  }
+  .blocker-item:first-of-type,
+  .evidence-item:first-of-type { border-top: 0; }
+  .blocker-title,
+  .evidence-title { font-size: 0.76rem; font-weight: 600; }
+  .blocker-meta,
+  .evidence-meta { margin-top: 0.25rem; font-size: 0.65rem; color: var(--text-muted); line-height: 1.5; }
+  .evidence-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .evidence-badges { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+  .portfolio-copy {
+    border: 1px solid var(--border-accent);
+    background: var(--card-bg-accent);
+    color: var(--accent-hover);
+    border-radius: 7px;
+    padding: 0.55rem 0.8rem;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    cursor: pointer;
+    transition: all 0.18s ease;
+  }
+  .portfolio-copy:hover { border-color: var(--border-accent-strong); transform: translateY(-1px); }
+  .portfolio-empty { padding: 4rem 1rem; text-align: center; color: var(--text-muted); }
+
+  @media (max-width: 900px) {
+    .portfolio-grid { grid-template-columns: 1fr; }
+    .portfolio-ranking { order: 1; }
+    .portfolio-detail { order: 2; }
+  }
+  @media (max-width: 640px) {
+    .portfolio-hero { padding: 1.4rem; display: block; }
+    .portfolio-asof { margin-top: 1rem; }
+    .portfolio-stats { grid-template-columns: 1fr 1fr; }
+    .portfolio-decision { grid-template-columns: 1fr; }
+    .dimension-row { grid-template-columns: 1fr 1.2fr 34px; }
+    .wip-strip { align-items: flex-start; flex-direction: column; }
+    .portfolio-detail-header { flex-direction: column; }
+    .portfolio-detail-score { text-align: left; }
   }
 
   /* ═══ Responsive ═══ */
@@ -1221,6 +1499,7 @@ const API = window.location.origin;
 const POLL_MS = 5000;
 
 const TABS = [
+  { id: 'portfolio', label: 'Portfolio', icon: '\u25C8' },
   { id: 'kanban', label: 'Kanban', icon: '\u25A3' },
   { id: 'agents', label: 'Live Agents', icon: '\u25B6' },
   { id: 'activity', label: 'Activity', icon: '\u26A1' },
@@ -1351,10 +1630,10 @@ function queueIndex(queue) {
 // ─── Theme Toggle ───
 function initTheme() {
   const stored = localStorage.getItem('mc-theme');
-  if (stored === 'dark') {
-    document.documentElement.setAttribute('data-theme', 'dark');
-  } else {
+  if (stored === 'light') {
     document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', 'dark');
   }
 }
 initTheme();
@@ -1669,6 +1948,181 @@ function VerticalKanban({ queue, statusFilter, completedPage, onPageChange, onPr
           </div>
         `}
       `)}
+    </div>
+  `;
+}
+
+const PORTFOLIO_DIMENSION_LABELS = {
+  accepted_outcome_adoption: 'Accepted outcome & adoption',
+  finishability: 'Finishability',
+  commercial_commitment: 'Commercial commitment',
+  outcome_clarity: 'Outcome clarity',
+  blocker_ownership: 'Blocker ownership',
+  evidence_quality: 'Evidence quality',
+  strategic_compounding: 'Strategic compounding',
+};
+
+function PortfolioView({ portfolio, loading, error }) {
+  const projects = portfolio?.projects || [];
+  const [selectedId, setSelectedId] = useState(null);
+
+  useEffect(() => {
+    if (projects.length && !projects.some(project => project.id === selectedId)) {
+      setSelectedId(projects[0].id);
+    }
+  }, [projects.map(project => project.id).join('|'), selectedId]);
+
+  if (loading) return html`<div class="portfolio-empty">Loading the engagement portfolio...</div>`;
+  if (error) return html`<div class="portfolio-empty">Portfolio unavailable: ${error}</div>`;
+  if (!projects.length) return html`<div class="portfolio-empty">No engagement projects are configured.</div>`;
+
+  const selected = projects.find(project => project.id === selectedId) || projects[0];
+  const summary = portfolio.summary || {};
+  const staleTotal = projects.reduce((sum, project) => sum + (project.evidence_summary?.stale_count || 0), 0);
+  const highestScore = Math.max(...projects.map(project => project.score || 0));
+
+  async function copyAdvice() {
+    try {
+      await navigator.clipboard.writeText(selected.advice_brief || '');
+      showToast(`Advice brief copied for ${selected.name}`, 'success');
+    } catch (copyError) {
+      showToast('Could not copy the advice brief', 'error');
+    }
+  }
+
+  return html`
+    <div class="portfolio-view">
+      <section class="portfolio-hero">
+        <div>
+          <div class="portfolio-eyebrow">Portfolio / Finish more</div>
+          <h1>Finish paid outcomes, not tickets.</h1>
+          <p>Engagement projects ranked by accepted adoption, finishability, commercial commitment, blocker control, and evidence—not engineering volume.</p>
+        </div>
+        <div class="portfolio-asof">SCORED ${portfolio.scored_as_of || '—'}</div>
+      </section>
+
+      <div class="wip-strip ${summary.wip_violation ? 'violation' : ''}">
+        <span><strong>WIP limit:</strong> ${summary.active_client_outcomes || 0}/${summary.client_outcome_limit || 0} client outcomes · ${summary.active_strategic_experiments || 0}/${summary.strategic_experiment_limit || 0} experiments</span>
+        <span>${summary.wip_violation ? 'CAPACITY VIOLATION — PAUSE OR FINISH' : 'CAPACITY CONTROLLED'}</span>
+      </div>
+
+      <div class="portfolio-stats">
+        <div class="portfolio-stat">
+          <div class="portfolio-label">Projects</div>
+          <div class="portfolio-stat-value">${summary.total_projects || projects.length}</div>
+        </div>
+        <div class="portfolio-stat">
+          <div class="portfolio-label">Highest score</div>
+          <div class="portfolio-stat-value">${highestScore}</div>
+        </div>
+        <div class="portfolio-stat">
+          <div class="portfolio-label">Finish-now</div>
+          <div class="portfolio-stat-value">${projects.filter(project => project.action_band === 'finish' || project.action_band === 'scale').length}</div>
+        </div>
+        <div class="portfolio-stat">
+          <div class="portfolio-label">Stale evidence</div>
+          <div class="portfolio-stat-value">${staleTotal}</div>
+        </div>
+      </div>
+
+      <div class="portfolio-grid">
+        <section class="portfolio-ranking" aria-label="Ranked engagement projects">
+          <div class="portfolio-ranking-header">
+            <div class="portfolio-label">Ranked projects</div>
+            <span class="portfolio-chip">100 points</span>
+          </div>
+          ${projects.map(project => html`
+            <button
+              key=${project.id}
+              class="project-rank-card ${selected.id === project.id ? 'active' : ''}"
+              onClick=${() => setSelectedId(project.id)}
+              aria-pressed=${selected.id === project.id}
+            >
+              <span class="project-rank-number">#${String(project.rank).padStart(2, '0')}</span>
+              <span>
+                <span class="project-rank-name">${project.name}</span>
+                <span class="project-rank-client">${project.client}</span>
+                <span class="project-rank-meta">
+                  <span class="portfolio-chip ${project.action_band}">${project.action_band}</span>
+                  <span class="portfolio-chip">${project.lifecycle}</span>
+                </span>
+              </span>
+              <span class="project-score">${project.score}<small>/100</small></span>
+            </button>
+          `)}
+        </section>
+
+        <section class="portfolio-detail" aria-live="polite">
+          <div class="portfolio-detail-header">
+            <div>
+              <div class="portfolio-label">Rank ${selected.rank} · ${selected.action_band}</div>
+              <h2>${selected.name}</h2>
+              <div class="portfolio-detail-client">${selected.client} · ${selected.owner}</div>
+            </div>
+            <div class="portfolio-detail-score">
+              <strong>${selected.score}</strong>
+              <span>${selected.recommendation}</span>
+            </div>
+          </div>
+
+          <div class="portfolio-decision">
+            <div class="portfolio-decision-card">
+              <div class="portfolio-label">Accepted outcome</div>
+              <p>${selected.outcome_unit}</p>
+            </div>
+            <div class="portfolio-decision-card">
+              <div class="portfolio-label">Finish gate</div>
+              <p>${selected.finish_gate}</p>
+            </div>
+          </div>
+
+          <div class="portfolio-section">
+            <div class="portfolio-section-heading">
+              <div class="portfolio-label">Score breakdown</div>
+              <span class="portfolio-chip ${selected.action_band}">Dominant gap: ${PORTFOLIO_DIMENSION_LABELS[selected.dominant_gap] || selected.dominant_gap}</span>
+            </div>
+            ${(selected.score_breakdown || []).map(dimension => html`
+              <div class="dimension-row" title=${dimension.rationale}>
+                <div class="dimension-name">${PORTFOLIO_DIMENSION_LABELS[dimension.id] || dimension.id}</div>
+                <div class="dimension-track"><div class="dimension-fill" style=${`width:${(dimension.rating / 5) * 100}%`}></div></div>
+                <div class="dimension-value">${dimension.rating}/5</div>
+              </div>
+            `)}
+          </div>
+
+          <div class="portfolio-section">
+            <div class="portfolio-section-heading">
+              <div class="portfolio-label">Blockers</div>
+              <span class="portfolio-chip">${(selected.blockers || []).length}</span>
+            </div>
+            ${(selected.blockers || []).length ? selected.blockers.map(blocker => html`
+              <div class="blocker-item">
+                <div class="blocker-title">${blocker.summary}</div>
+                <div class="blocker-meta">Owner: ${blocker.owner} · Next: ${blocker.next_action} · Decision: ${blocker.decision_date}</div>
+              </div>
+            `) : html`<div class="blocker-item"><div class="blocker-meta">No blocker recorded.</div></div>`}
+          </div>
+
+          <div class="portfolio-section">
+            <div class="portfolio-section-heading">
+              <div class="portfolio-label">Evidence</div>
+              <button class="portfolio-copy" onClick=${copyAdvice}>Copy advice brief</button>
+            </div>
+            ${(selected.evidence || []).map(evidence => html`
+              <div class="evidence-item">
+                <div class="evidence-top">
+                  <div class="evidence-title">${evidence.summary}</div>
+                  <div class="evidence-badges">
+                    <span class="portfolio-chip ${evidence.status}">${evidence.status}</span>
+                    <span class="portfolio-chip ${evidence.freshness}">${evidence.freshness}</span>
+                  </div>
+                </div>
+                <div class="evidence-meta">${evidence.source_type} · ${evidence.source} · observed ${evidence.observed_at}${evidence.expires_at ? ` · expires ${evidence.expires_at}` : ''}</div>
+              </div>
+            `)}
+          </div>
+        </section>
+      </div>
     </div>
   `;
 }
@@ -2402,7 +2856,7 @@ function IssueDetailModal({ item, issue, prompts, onClose, onDispatch, onFinish,
 }
 
 function App() {
-  const [tab, setTab] = useState('kanban');
+  const [tab, setTab] = useState('portfolio');
   const [repoFilter, setRepoFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('active'); // active, completed, failed, all
   const [completedPage, setCompletedPage] = useState(0);
@@ -2417,6 +2871,7 @@ function App() {
   _setToasts = setToasts;
 
   const queue = useFetch('/api/queue');
+  const portfolio = useFetch('/api/portfolio');
 
   // Deep linking: open issue from URL hash (#issue=repo/owner#123)
   useEffect(() => {
@@ -2474,6 +2929,7 @@ function App() {
   })();
 
   const counts = {
+    portfolio: portfolio.data?.projects?.length || 0,
     kanban: (filteredQueue?.pending?.length || 0) + (filteredQueue?.in_progress?.length || 0) + (filteredQueue?.failed?.length || 0),
     agents: health.data?.worker_pools?.active_workers || 0,
     activity: events.data?.length || 0,
@@ -2637,8 +3093,11 @@ function App() {
     <${Header} queue=${queue.data} />
     <${TabBar} active=${tab} onSwitch=${setTab} counts=${counts} />
     <div class="content">
-      <${StatsBar} queue=${queue.data} stats=${stats.data} />
-      <${RepoEligibilityAlerts} diagnostics=${diagnostics.data} repoFilter=${repoFilter} />
+      ${tab !== 'portfolio' && html`<${StatsBar} queue=${queue.data} stats=${stats.data} />`}
+      ${tab !== 'portfolio' && html`<${RepoEligibilityAlerts} diagnostics=${diagnostics.data} repoFilter=${repoFilter} />`}
+      ${tab === 'portfolio' && html`
+        <${PortfolioView} portfolio=${portfolio.data} loading=${portfolio.loading} error=${portfolio.error} />
+      `}
       ${tab === 'kanban' && html`
         <div class="filter-bar">
           <div class="status-tabs">
