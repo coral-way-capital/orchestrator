@@ -6,9 +6,14 @@ GitHub, edits prompts, or changes model/task routing.
 
 Each terminal PR has one evaluation covering merge state, explicit review
 severity, fix-up ratio, exact time to merge, reopening/follow-up signals, and
-human override. Findings retain exact GitHub review, commit, PR, issue, or
-comment URLs when the source provides them. Missing source signals are stored
-as `not_available`; partial evidence has an `evidence_gap`.
+human override. It also records exact queue-item, dispatch, structured-result,
+and PR-ledger linkage. Review-cycle and review-delay metrics come from the PR
+ledger; build and size remain explicitly `not_available` because that ledger
+does not contain exact source data. Accepted business outcome is always
+separate and `not_available`; merge is never treated as acceptance. Findings
+retain exact GitHub review, commit, PR, issue, or comment URLs when the source
+provides them. Missing source signals are stored as `not_available`; partial
+evidence has an `evidence_gap`.
 
 Review severity is accepted only from an explicit
 `[severity:critical|high|medium|low]` review-body tag. Fix-up ratio is:
@@ -18,7 +23,13 @@ commits after the first changes-requested review / all PR commits
 ```
 
 If review bodies or commit history are absent, the registry does not infer
-either value.
+either value. Only the bounded severity tag and review/commit provenance are
+persisted; review-body text is not copied into the ledger.
+
+Evaluation refreshes are replay-safe. The current row is unchanged when only
+the evaluation clock or input ordering changes. Material evidence revisions
+are appended once to `worker_evaluation_history` by semantic hash before the
+current projection changes.
 
 Generate a deterministic weekly digest:
 
@@ -30,7 +41,9 @@ python3 worker_evaluations.py \
 The digest groups PRs whose exact terminal timestamp falls in the requested
 week by prompt, model provider/model, and task class. A failure must repeat at
 least twice to qualify. Ordering is count descending and then lexical, so ties
-are stable. It names the top failure and proposes exactly one system change.
+are stable. Rows with unavailable routing dimensions are counted as excluded
+and cannot rank or produce a recommendation. It names at most one top failure
+and proposes at most one unapplied system change.
 
 ## Routing approval boundary
 
@@ -39,11 +52,15 @@ Feedback is recommendations-only. `routing_gate()` always returns
 after an Ivan approval record. Automatic routing cannot be introduced until:
 
 1. at least 30 days of observation have elapsed;
-2. Ivan has explicitly approved crossing the boundary; and
+2. GitHub user `ivanacostarubio` has explicitly approved crossing the boundary
+   in linked GitHub evidence at or after the eligibility instant; and
 3. a later, separately reviewed code change adds an actual routing mechanism.
 
 This issue starts the observation mechanism; it does not claim that the
-30-day gate has elapsed or that approval exists.
+30-day gate has elapsed or that approval exists. Malformed, premature, future,
+unlinked, and other-actor approvals are rejected. Even a valid boundary record
+cannot mutate routing, provider, model, prompt, weight, queue, or production
+configuration.
 
 ## Acceptance evidence
 
