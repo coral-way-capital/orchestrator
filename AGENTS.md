@@ -43,6 +43,7 @@ A dashboard and orchestration layer for GitHub issues owned by [Coral Way Capita
 | `queue.py` | Queue CRUD + GitHub sync. Manages `queue.json` with lists: `pending`, `in_progress`, `completed`, `failed`. Incremental sync via `?since=` with per-repo timestamps. |
 | `events.py` | SQLite event log at `events.db`. Structured log of all events (enqueue, claim, complete, fail, dispatch, sync, guard triggers). Powers metrics, timeline, and stats. |
 | `orchestrator_check.py` | Cron script. Reads queue, determines which issues to dispatch, outputs context for agents. Max 2 concurrent workers, 1 per repo. |
+| `liveness.py` | Worker liveness classification (live/stale/dead) and safe stale-worker reaping. Two-signal model: heartbeat staleness + process check. Idempotent, audited, preserves recovery manifest. |
 | `dashboard/index.html` | Single-file Preact SPA. Kanban board with clickable cards, issue detail modal, agent dispatch with prompt selector, activity timeline, metrics, guards, decompose tree. Dark/light mode. |
 | `prompts/` | Prompt template directory. Each `.md` file is a template with YAML frontmatter and `{{variable}}` placeholders. Drop new files to add prompt options. |
 | `cwc-issue-webhook.service` | systemd unit file for the webhook receiver. |
@@ -164,6 +165,30 @@ Your template with {{title}}, {{repo}}, {{local_path}},
 |------|------|--------|
 | `/` | GitHub webhook payload | Receives `issues` events, classifies size, enqueues or routes to decomposition |
 | `/api/dispatch` | `{"item_id": "...", "prompt_id": "..."}` | Claim item, render prompt, spawn `pi -p` agent in background |
+| `/api/heartbeat` | `{"worker_id"\|"item_id", "phase", "progress", "message"}` | Worker heartbeat: stamp `last_heartbeat_at`, store phase/progress. Required for liveness reaping (issue #16) |
+
+### Worker Liveness & Reaping (issue #16)
+
+Mission Control distinguishes **live**, **stale**, and **dead** workers using a two-signal model implemented in `liveness.py`:
+
+1. **Heartbeat staleness** — every active worker should emit a heartbeat (`POST /api/heartbeat`) at least every 60 s. A worker whose heartbeat is older than `HEARTBEAT_TIMEOUT_SECONDS` (60 s) is *stale*.
+2. **Process/session liveness** — a stale worker is only *dead* when a process probe (`kill -0 <pid>`) confirms the PID is gone. Workers without a PID rely on heartbeat alone: stale = dead-eligible only after confirmation.
+
+**A live process is never reaped by time alone.** Only workers that are *both* stale (heartbeat) AND confirmed dead (process check) are reaped.
+
+Reaping is **idempotent** and **fully audited**:
+- Each reaped worker gets a JSON recovery manifest at `<traces>/<item>/reaper_recovery.json` preserving branch, worktree, log paths, and recovery instructions.
+- A structured `worker.reaped` event is logged via `events.log_event`.
+- Re-reaping an already-removed worker is a no-op.
+
+Workers receive a scoped bearer token at dispatch and emit authenticated
+heartbeats with phase/progress so the dashboard can show what long-running jobs
+are doing:
+```json
+POST /api/heartbeat
+Authorization: Bearer <worker-scoped token>
+{"item_id": "coral-way-capital/audit-agent#42", "phase": "writing tests", "progress": 0.7}
+```
 
 ### Sync Response Format
 

@@ -65,6 +65,14 @@ def normalize_dispatch_telemetry(response):
             "session_path",
             ("paths", "session"), ("files", "session"), ("data", "session_path"),
         )),
+        "branch": _first(response, (
+            "branch", "branch_name", "head_ref",
+            ("git", "branch"), ("agent", "branch"), ("data", "branch"),
+        )),
+        "worktree": _first(response, (
+            "worktree", "worktree_path", "local_path",
+            ("paths", "worktree"), ("agent", "worktree"), ("data", "worktree"),
+        )),
     }
     telemetry["agent_pid"] = telemetry["pid"]
 

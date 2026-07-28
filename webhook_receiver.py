@@ -37,6 +37,7 @@ from events import init_db, log_event, query_events, get_stats, get_decompose_tr
 from agent_traces import get_agent_trace_payload, ensure_trace_bundle, upsert_trace
 from worker_pools import WorkerPoolsManager
 from dispatch_telemetry import normalize_dispatch_telemetry
+import liveness as worker_liveness
 from worker_results import (
     WorkerResultError,
     ingest_worker_result,
@@ -339,6 +340,9 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         if content_length < 0:
             self._json_response({"error": "Invalid Content-Length"}, 400)
             return
+        if path == "/api/heartbeat" and content_length > 4096:
+            self._json_response({"error": "heartbeat body too large"}, 413)
+            return
         if path == "/api/worker-result":
             if content_length > MAX_WORKER_RESULT_BODY:
                 self._json_response({"error": "Worker result body too large"}, 413)
@@ -517,6 +521,57 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
 
             except Exception as e:
                 self._json_response({"error": str(e)}, 500)
+            return
+
+        if path == "/api/heartbeat":
+            # Worker heartbeat: stamp last_heartbeat_at + optional phase/progress.
+            # Required by issue #16 so the reaper distinguishes live long jobs
+            # from dead workers. Body: {"worker_id"|"item_id", "phase", "progress", "message"}
+            try:
+                payload = json.loads(raw_body)
+            except json.JSONDecodeError:
+                self._json_response({"error": "Invalid JSON"}, 400)
+                return
+            validation_error = worker_liveness.validate_heartbeat_payload(payload)
+            if validation_error:
+                self._json_response({"error": validation_error}, 400)
+                return
+            worker_id = payload.get("worker_id")
+            item_id = payload.get("item_id")
+            matched_worker = next((
+                worker for worker in _pool_mgr.workers()
+                if (worker_id and worker.get("id") == worker_id)
+                or (not worker_id and item_id and worker.get("item_id") == item_id)
+            ), None)
+            matched_item_id = matched_worker.get("item_id") if matched_worker else item_id
+            if item_id and item_id != matched_item_id:
+                self._json_response({"error": "worker_id and item_id do not match"}, 400)
+                return
+            heartbeat_secret = load_gateway_secret() or load_secret()
+            if not heartbeat_secret:
+                self._json_response({"error": "heartbeat authentication unavailable"}, 503)
+                return
+            authorization = self.headers.get("Authorization", "")
+            scheme, _, token = authorization.partition(" ")
+            if not matched_worker or scheme.lower() != "bearer" or not worker_liveness.verify_heartbeat_token(
+                heartbeat_secret, matched_item_id, token
+            ):
+                self._json_response({"error": "unauthorized"}, 401)
+                return
+            updated = _pool_mgr.record_heartbeat(
+                worker_id=matched_worker.get("id"), item_id=matched_item_id,
+                phase=payload.get("phase"),
+                progress=payload.get("progress"),
+                message=payload.get("message"),
+            )
+            if not updated:
+                self._json_response({"error": "worker not found"}, 404)
+                return
+            log_event("worker.heartbeat", item_id=matched_item_id,
+                      details={"worker_id": matched_worker.get("id"), "phase": payload.get("phase"),
+                               "progress": payload.get("progress")})
+            self._json_response({"ok": True, "worker_id": matched_worker.get("id"),
+                                 "item_id": matched_item_id})
             return
 
         if path == "/api/dispatch":
@@ -1056,7 +1111,19 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     "failed": len(dq["failed"]),
                 },
                 "worker_pools": _pool_mgr.health(),
-                "reaped_stale": [{"id": w.get("id"), "item_id": w.get("item_id")} for w in stale],
+                "worker_liveness": [
+                    {"worker_id": r.worker_id, "item_id": r.item_id,
+                     "pid": r.pid, "state": r.state, "stale": r.stale,
+                     "process_alive": r.process_alive,
+                     "evidence_source": r.evidence_source,
+                     "heartbeat_age_seconds": r.heartbeat_age_seconds,
+                     "reason": r.reason}
+                    for r in _pool_mgr.classify_liveness()
+                ],
+                "reaped_stale": [
+                    {"id": w.get("worker_id"), "item_id": w.get("item_id")}
+                    for w in stale
+                ],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
         elif path == "/health":
@@ -1342,6 +1409,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         # receives this and spawns a coding agent
         local_path = REPO_MAP.get(repo, f"/home/deploy/apps/{repo.split('/')[-1]}")
         secret = load_gateway_secret() or load_secret() or ""
+        heartbeat_url = f"http://100.102.201.26:{os.environ.get('PORT', '8646')}/api/heartbeat"
+        heartbeat_token = worker_liveness.make_heartbeat_token(secret, item_id)
 
         payload = {
             "action": "opened",
@@ -1364,6 +1433,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             "local_path": local_path,
             "prompt_id": prompt_id,
             "item_id": item_id,
+            "heartbeat_url": heartbeat_url,
+            "heartbeat_token": heartbeat_token,
             "model_provider": model_provider,
             "model": model_name,
             "chain_pr_guardian": True,
@@ -1398,6 +1469,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             dispatch_id = telemetry.get("dispatch_id")
             session_id = telemetry.get("session_id")
             agent_pid = telemetry.get("pid")
+            branch = telemetry.get("branch") or f"fix/issue-{issue_number}"
+            worktree = telemetry.get("worktree") or f"/tmp/cwc-work-{issue_number}"
 
             # Track the dispatch. Gateway may not expose PID yet; diagnostics
             # below make that explicit for worker pool and API consumers.
@@ -1420,6 +1493,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     i["status_url"] = telemetry.get("status_url")
                     i["status_path"] = telemetry.get("status_path")
                     i["session_path"] = telemetry.get("session_path")
+                    i["branch"] = branch
+                    i["worktree"] = worktree
                     i["telemetry_missing"] = telemetry.get("telemetry_missing", [])
                     i["liveness_reliable"] = telemetry.get("liveness_reliable", False)
                     i["agent_log"] = telemetry.get("log_path")
@@ -1437,6 +1512,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 "dispatch_id": dispatch_id,
                 "session_id": session_id,
                 "pid": agent_pid,
+                "branch": branch,
+                "worktree": worktree,
                 "model_provider": model_provider,
                 "model": model_name,
                 "prompt_id": prompt_id,
@@ -1469,6 +1546,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 transcript_path=telemetry.get("transcript_path"),
                 status_url=telemetry.get("status_url"),
                 status_path=telemetry.get("status_path"),
+                session_path=telemetry.get("session_path"),
+                branch=branch, worktree=worktree,
                 telemetry_missing=telemetry.get("telemetry_missing", []),
                 liveness_reliable=telemetry.get("liveness_reliable", False),
             )
@@ -1480,6 +1559,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                     transcript_path=telemetry.get("transcript_path"),
                     status_url=telemetry.get("status_url"),
                     status_path=telemetry.get("status_path"),
+                    session_path=telemetry.get("session_path"),
+                    branch=branch, worktree=worktree,
                     telemetry_missing=telemetry.get("telemetry_missing", []),
                     liveness_reliable=telemetry.get("liveness_reliable", False),
                 )

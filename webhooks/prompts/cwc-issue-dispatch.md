@@ -10,6 +10,22 @@ Repository path: {local_path}
 Isolated worktree: /tmp/cwc-work-{issue.number}
 Branch: fix/issue-{issue.number}
 
+# Worker Heartbeat
+
+Before repository work, and at least once every 60 seconds while actively
+working, report real progress with:
+
+```bash
+curl --fail --silent --show-error \
+  -H 'Authorization: Bearer {heartbeat_token}' \
+  -H 'Content-Type: application/json' \
+  --data '{"item_id":"{item_id}","phase":"working","progress":0}' \
+  '{heartbeat_url}'
+```
+
+Update `phase` and `progress` (0 through 1) to reflect actual work. Do not run a
+detached heartbeat loop: heartbeats must stop if this worker stops.
+
 # Issue Description
 
 {issue.body}
