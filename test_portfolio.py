@@ -115,6 +115,9 @@ class PortfolioScoreTests(unittest.TestCase):
         self.assertEqual(scored["score"], 100)
         self.assertEqual(scored["action_band"], "completed")
         self.assertIn("no further action", scored["recommendation"])
+        brief = build_advice_brief(scored)
+        self.assertIn("No active work", brief)
+        self.assertNotIn("smallest decision or action", brief)
         low = score_project(
             project(ratings={key: 1 for key in WEIGHTS}, lifecycle="completed", blockers=[]),
             WEIGHTS,
