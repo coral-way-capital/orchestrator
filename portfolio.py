@@ -246,7 +246,12 @@ def score_project(
         )
 
     rounded_score = int(round(score))
-    action_band, recommendation = _action_band(rounded_score)
+    if result.get("lifecycle") == "completed":
+        # Completed projects keep their score for the portfolio detail view but
+        # no longer receive a fix/adoption/scale action: closure was decided.
+        action_band, recommendation = "completed", "Completed; closure decided — no further action"
+    else:
+        action_band, recommendation = _action_band(rounded_score)
     status_counts = Counter(item["status"] for item in result.get("evidence", []))
     stale_ids: list[str] = []
     for item in result.get("evidence", []):
@@ -304,7 +309,11 @@ def build_advice_brief(project: dict[str, Any]) -> str:
             "Blockers:",
             *blocker_lines,
             f"Evidence statuses: {status_text}; stale={project.get('evidence_summary', {}).get('stale_count', 0)}",
-            "Question: What is the smallest decision or action that produces a paid, accepted outcome fastest?",
+            (
+                "Closure: No active work. Only minor administrative closeout remains; do not reopen historical finish gates."
+                if project.get("lifecycle") == "completed"
+                else "Question: What is the smallest decision or action that produces a paid, accepted outcome fastest?"
+            ),
         ]
     )
 

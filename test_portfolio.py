@@ -103,6 +103,35 @@ class PortfolioScoreTests(unittest.TestCase):
         self.assertEqual(scored["score"], 100)
         self.assertEqual(scored["action_band"], "scale")
 
+    def test_completed_lifecycle_overrides_score_only_action_band(self):
+        # A completed project must not receive a fix/adoption/scale action even
+        # when its score alone would place it in an active band.
+        ratings = {key: 5 for key in WEIGHTS}
+        scored = score_project(
+            project(ratings=ratings, lifecycle="completed", blockers=[]),
+            WEIGHTS,
+            as_of=date(2026, 7, 27),
+        )
+        self.assertEqual(scored["score"], 100)
+        self.assertEqual(scored["action_band"], "completed")
+        self.assertIn("no further action", scored["recommendation"])
+        brief = build_advice_brief(scored)
+        self.assertIn("No active work", brief)
+        self.assertNotIn("smallest decision or action", brief)
+        low = score_project(
+            project(ratings={key: 1 for key in WEIGHTS}, lifecycle="completed", blockers=[]),
+            WEIGHTS,
+            as_of=date(2026, 7, 27),
+        )
+        self.assertEqual(low["action_band"], "completed")
+
+    def test_other_lifecycles_keep_score_only_action_band(self):
+        scored = score_project(
+            project(lifecycle="paused"), WEIGHTS, as_of=date(2026, 7, 27)
+        )
+        self.assertNotEqual(scored["action_band"], "completed")
+        self.assertIn(scored["action_band"], {"scale", "finish", "fix", "escalate", "pause"})
+
     def test_weighted_score_rewards_adoption_and_finishability(self):
         ratings = {key: 0 for key in WEIGHTS}
         ratings["accepted_outcome_adoption"] = 5
