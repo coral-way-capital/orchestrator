@@ -125,6 +125,12 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(kb.get_task(conn, other).status, "blocked")
             historical = factory.intake(kb, conn, "coral-way-capital/visit-merida-chatbot", issue(), legacy_status="pending")
             self.assertEqual(kb.get_task(conn, historical).status, "blocked")
+            completed = factory.intake(kb, conn, "coral-way-capital/history", issue(1), legacy_status="completed")
+            self.assertEqual(kb.get_task(conn, completed).status, "done")
+            failed = factory.intake(kb, conn, "coral-way-capital/history", issue(2), legacy_status="failed")
+            self.assertEqual(kb.get_task(conn, failed).status, "blocked")
+            fresh = factory.intake(kb, conn, "coral-way-capital/history", issue(3))
+            self.assertEqual(kb.get_task(conn, fresh).status, "ready", "inert history must not acquire a repository lane")
         factory.allowed_assignees.cache_clear()
 
 
