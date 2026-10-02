@@ -4,6 +4,7 @@ import hmac
 import http.client
 from http.server import HTTPServer
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,25 @@ def issue(number=7, **overrides):
 
 
 class FactoryTests(unittest.TestCase):
+    def test_script_only_guardian_is_silent_when_idle_and_keeps_failures_visible(self):
+        from factory.pr_guardian_job import main
+        reports = [(0, {"merged": [], "errors": []}, ""),
+                   (1, {"merged": [], "errors": ["fixture failure"]}, "fixture failure"),
+                   (0, {"merged": [{"repo": "fixture", "number": 3}], "errors": []}, "fixture")]
+        with patch("sys.argv", ["pr-guardian.py", "--dry-run"]):
+            for code, report, expected in reports:
+                result = Mock(returncode=code, stdout="report\n---JSON---\n" + json.dumps(report))
+                output = io.StringIO()
+                with patch("subprocess.run", return_value=result) as run, contextlib.redirect_stdout(output):
+                    self.assertEqual(main(), code)
+                self.assertEqual(run.call_args.args[0][-1], "--dry-run")
+                if expected:
+                    self.assertIn(expected, output.getvalue())
+                else:
+                    self.assertEqual(output.getvalue(), "")
+            with patch("subprocess.run", return_value=Mock(returncode=0, stdout="unparseable")), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(), 1)
+
     def test_admission_preserves_exclusions_and_fails_closed_on_missing_github_evidence(self):
         with patch.dict(os.environ, {"CWC_ISSUE_ASSIGNEES": "ivanacostarubio"}, clear=False):
             factory.allowed_assignees.cache_clear()

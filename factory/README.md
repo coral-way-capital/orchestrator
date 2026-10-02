@@ -12,7 +12,9 @@ The old JSON queue and metrics remain historical records, not another live queue
 ## Admission and execution
 
 - `factory_bridge.py --sync` runs as a script-only Hermes job every two minutes.
-  Signed GitHub issue deliveries use `--webhook`; repeated deliveries share one
+  The Guardian and review-noise cleaner also move to script-only jobs in this
+  profile, keeping their existing cadence. Guardian reports merges/errors and
+  stays silent when idle. Signed GitHub issue deliveries use `--webhook`; repeated deliveries share one
   durable `github:OWNER/REPO#NUMBER` idempotency key, including archived cards.
 - Existing assignee and label rules apply. Maya continues to exclude
   `coral-way-capital/visit-merida-chatbot`. Current GitHub state and open linked
