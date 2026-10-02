@@ -24,12 +24,36 @@ gh issue view {N} --repo {repository.full_name} --json title,body,labels
 
 ## STEP 3 — Get the PR diff
 
+```bash
+set -e
+REPO_DIR='/home/deploy/apps/{repository.name}'
+REPO_KEY=$(printf '%s' '{repository.full_name}' | tr '/' '-')
+RUN_ROOT="${HERMES_HOME:-$HOME/.hermes}/workspaces"
+mkdir -p "$RUN_ROOT"
+RUN_DIR=$(mktemp -d "$RUN_ROOT/$REPO_KEY-pr-{pull_request.number}-scope-XXXXXX")
+if [ ! -d "$REPO_DIR/.git" ] && [ ! -f "$REPO_DIR/.git" ]; then
+  REPO_DIR="$RUN_DIR/repository"
+  git clone --no-checkout 'https://github.com/{repository.full_name}.git' "$REPO_DIR"
+fi
+git -C "$REPO_DIR" fetch --no-tags origin '{pull_request.head.sha}' '{pull_request.base.sha}'
+git -C "$REPO_DIR" worktree add --detach "$RUN_DIR/worktree" '{pull_request.head.sha}'
+cd "$RUN_DIR/worktree"
+test "$(git rev-parse HEAD)" = '{pull_request.head.sha}'
 ```
-REPO={repository.name}
-cd /home/deploy/apps/$REPO 2>/dev/null || (git clone git@github.com:{repository.full_name}.git /home/deploy/apps/$REPO && cd /home/deploy/apps/$REPO)
-git fetch origin pull/{pull_request.number}/head:pr-{pull_request.number} 2>/dev/null
-git checkout -f pr-{pull_request.number} 2>/dev/null
-git diff origin/{pull_request.base.ref}...HEAD
+
+Record `RUN_DIR` and `REPO_DIR` and reuse those exact values throughout this run.
+Keep payloads in `RUN_DIR`, outside the code checkout. Never stash, switch,
+reset, or clean the shared checkout, or delete a previous run's worktree/branch.
+If checkout/fetch fails, stop; do not test or review a different commit.
+Before posting review/AC evidence, verify the live PR head equals the reviewed
+commit. Before pushing fixes, verify the live PR head equals the starting commit
+of that fix cycle; push normally and update that expected head after success.
+Stop on a changed head or a rejected push; never force push. If a fix requires
+writing to a fork, report that blocker instead of pushing to a same-named
+branch in the base repository.
+
+```bash
+git diff '{pull_request.base.sha}'...HEAD
 ```
 
 ## STEP 4 — Extract requirements from the issue
@@ -67,14 +91,9 @@ coverage = count(IMPLEMENTED) / total_requirements
 
 ## STEP 7 — Post results as PR comment
 
-Write the comment to /tmp/gap-comment.md, then post it:
+Write the comment to "$RUN_DIR/gap-comment.md", then post it:
 ```
-gh api repos/{repository.full_name}/issues/{pull_request.number}/comments \
-  --input - --jq '.html_url' << 'EOFCOMMENT'
-{
-  "body": $(cat /tmp/gap-comment.md | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
-}
-EOFCOMMENT
+gh pr comment {pull_request.number} --repo {repository.full_name} --body-file "$RUN_DIR/gap-comment.md"
 ```
 
 ### If verdict is PASS:
@@ -121,12 +140,11 @@ gh pr edit {pull_request.number} --repo {repository.full_name} --body "$(gh pr v
 ```
 
 ## STEP 8 — Cleanup
-
-```
-cd /home/deploy/apps/{repository.name}
-git checkout main 2>/dev/null
-git branch -D pr-{pull_request.number} 2>/dev/null
-```
+Preserve the run directory and record its path on failure or unfinished work.
+After a successful review/push, optional cleanup may remove only this run's
+clean worktree: `git -C "$REPO_DIR" worktree remove "$RUN_DIR/worktree"`.
+Do not use force; if removal fails, leave the worktree for recovery. Never
+switch the shared checkout or delete shared/local branches during cleanup.
 
 ## RULES
 
@@ -136,7 +154,7 @@ git branch -D pr-{pull_request.number} 2>/dev/null
 - Do NOT sign reviews or add any attribution
 - Do NOT narrate your process (no "I will now...", "Next I...", etc.)
 - Do NOT post any comments beyond the gap analysis
-- If the repo directory doesn't exist, clone it first
+- Use only the isolated checkout prepared above
 - If the diff is empty, post nothing and return empty string
 
 - Do NOT post a scope check if one already exists on this PR from the bot. Before posting, run: gh api repos/{repository.full_name}/issues/{pull_request.number}/comments --jq '.[].body' and check if 'Scope Check' already appears. If it does, DELETE the old comment and post the updated one, or simply skip if coverage hasn't changed significantly.
