@@ -11,6 +11,10 @@ linked PRs before editing and again before publishing. The factory excludes
 `coral-way-capital/visit-merida-chatbot` unless its explicit policy is changed.
 
 On a new run, inspect git status and the worktree's origin/branch before edits.
+A card can wait days: fetch the current default branch before the first edit.
+Fast-forward an unused, clean task branch to it (`git merge --ff-only
+origin/<default>`); never discard local commits or dirty files to refresh it.
+Recheck repository dependencies before starting and publishing.
 On retry, recover the previous run's work; never reset, stash, switch, force-push,
 or delete another run's workspace. Use the supplied native worktree. Do not use
 shared app checkouts or Mission Control callbacks. Use native Kanban tools for

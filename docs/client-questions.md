@@ -15,7 +15,7 @@ Canonical decision inbox, following Ivan's client-question template. Valid state
 - Blocks: migration PR merge and production cutover, not implementation or local/native validation
 
 GitHub rejected the prepared workflow because the existing Maya and local OAuth
-logins lack `workflow` scope. Five focused checks pass on Maya, including real
+logins lack `workflow` scope. Six focused checks pass on Maya, including real
 native Kanban and HTTP behavior. PR #15 was separately authorized and merged
 using Maya validation; that exception is not assumed for this new PR.
 
