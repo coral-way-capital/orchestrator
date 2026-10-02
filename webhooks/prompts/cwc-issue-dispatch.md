@@ -7,8 +7,9 @@ Resolve GitHub issue {repository.full_name}#{issue.number}: {issue.title}
 Issue URL: {issue.html_url}
 Repository: {repository.full_name}
 Repository path: {local_path}
-Isolated worktree: /tmp/cwc-work-{issue.number}
-Branch: fix/issue-{issue.number}
+Isolated worktree: {worktree}
+Branch: {branch}
+These unique run coordinates are assigned by the dispatcher and recorded for recovery.
 
 # Worker Heartbeat
 
@@ -37,7 +38,7 @@ You are DONE only when all of these are true:
 1. You understood the issue and inspected the relevant repo files.
 2. You made the smallest correct code/docs/config change that satisfies the issue.
 3. You ran the relevant verification gates available in the repo.
-4. You committed the work on branch `fix/issue-{issue.number}`.
+4. You committed the work on branch `$WORK_BRANCH`.
 5. You pushed the branch to origin.
 6. You opened a GitHub PR targeting the detected default branch.
 7. The PR body links the issue with `Closes #{issue.number}`.
@@ -53,19 +54,24 @@ Follow this sequence. Recover from normal failures. Do not stop after planning.
 ## 1. Prepare repository and worktree
 
 ```bash
-cd {local_path}
-git fetch origin
-DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD --short 2>/dev/null | sed 's#origin/##')
-if [ -z "$DEFAULT_BRANCH" ]; then
-  if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then DEFAULT_BRANCH=main; else DEFAULT_BRANCH=master; fi
-fi
-git checkout "$DEFAULT_BRANCH"
-git pull --ff-only origin "$DEFAULT_BRANCH"
-git worktree remove --force /tmp/cwc-work-{issue.number} 2>/dev/null || true
-git branch -D fix/issue-{issue.number} 2>/dev/null || true
-git worktree add /tmp/cwc-work-{issue.number} -b fix/issue-{issue.number} "origin/$DEFAULT_BRANCH"
-cd /tmp/cwc-work-{issue.number}
+set -e
+REPO_DIR='{local_path}'
+RUN_DIR=$(dirname '{worktree}')
+WORK_BRANCH='{branch}'
+mkdir -p "$(dirname "$RUN_DIR")"
+mkdir "$RUN_DIR"
+git -C "$REPO_DIR" fetch --no-tags origin
+DEFAULT_REF=$(git -C "$REPO_DIR" symbolic-ref refs/remotes/origin/HEAD --short)
+DEFAULT_BRANCH=${DEFAULT_REF#origin/}
+git -C "$REPO_DIR" worktree add -b "$WORK_BRANCH" "$RUN_DIR/worktree" "$DEFAULT_REF"
+cd "$RUN_DIR/worktree"
 ```
+
+If the default branch cannot be resolved, stop and report the blocker. Record
+`RUN_DIR` and `WORK_BRANCH` and reuse those exact values in later commands.
+Never switch, stash, reset, or clean the shared checkout. Never remove a prior
+run's worktree or branch during a retry. Inspect previous run artifacts first;
+keep unfinished work available for recovery. Each new run gets a unique path.
 
 Default branch is not always `main`; detect it. Do not hardcode `main`.
 
@@ -81,12 +87,15 @@ Default branch is not always `main`; detect it. Do not hardcode `main`.
 
 If `package.json` exists, inspect scripts first. Use the repo’s existing package manager preference:
 
-- `bun.lockb` or `bun.lock` → `bun install`
-- `pnpm-lock.yaml` → `pnpm install`
-- `yarn.lock` → `yarn install`
-- otherwise → `npm install`
+- `bun.lockb` or `bun.lock` → `bun install --frozen-lockfile`
+- `pnpm-lock.yaml` → `pnpm install --frozen-lockfile`
+- `yarn.lock` → `yarn install --immutable` (Yarn 1: `yarn install --frozen-lockfile`)
+- `package-lock.json` → `npm ci`
+- No lockfile → follow the repository bootstrap instructions; do not invent one.
 
-Do not spend time reinstalling if dependencies are already present and commands run.
+Check dependency presence directly before running tests. Install once only if
+missing, using the repository's documented frozen/immutable command. Do not
+change lockfiles just to bootstrap the worktree.
 
 ## 4. Implement
 
@@ -94,7 +103,7 @@ Do not spend time reinstalling if dependencies are already present and commands 
 - Never commit secrets or credentials.
 - Do not make unrelated cleanup changes.
 - Do not merge the PR.
-- Keep work isolated to `/tmp/cwc-work-{issue.number}`.
+- Keep work isolated to `$RUN_DIR/worktree`.
 
 ## 5. Verify
 
@@ -111,13 +120,15 @@ If verification fails because of your change, fix it. If it fails from unrelated
 
 ```bash
 git status --short
-git add -A
-git commit -m "fix: {issue.title} (closes #{issue.number})"
-git push -u origin fix/issue-{issue.number}
+# Inspect the diff, then stage only the files changed for this issue.
+git add -- <changed-files>
+ISSUE_TITLE=$(gh issue view {issue.number} --repo {repository.full_name} --json title --jq .title)
+git commit -m "fix: $ISSUE_TITLE (closes #{issue.number})"
+git push -u origin "$WORK_BRANCH"
 gh pr create \
   --base "$DEFAULT_BRANCH" \
-  --head fix/issue-{issue.number} \
-  --title "fix: {issue.title}" \
+  --head "$WORK_BRANCH" \
+  --title "fix: $ISSUE_TITLE" \
   --body $'Closes #{issue.number}\n\nImplements the requested fix from issue #{issue.number}.\n\nVerification:\n- <replace with commands run and outcome>'
 ```
 

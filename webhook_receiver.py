@@ -23,6 +23,7 @@ import os
 import time
 import threading
 import mimetypes
+import uuid
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -1578,6 +1579,14 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         # The cwc-issue-dispatch subscription on the Hermes gateway
         # receives this and spawns a coding agent
         local_path = REPO_MAP.get(repo, f"/home/deploy/apps/{repo.split('/')[-1]}")
+        # Allocate identity before dispatch so prompt, queue, and recovery agree.
+        repo_key = re.sub(r"[^A-Za-z0-9_.-]", "-", repo)
+        run_key = f"{repo_key}-issue-{issue_number}-{uuid.uuid4().hex[:12]}"
+        hermes_home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser()
+        worktree = str(hermes_home / "workspaces" / run_key / "worktree")
+        branch = f"fix/{run_key}"
+        item["branch"], item["worktree"] = branch, worktree
+        save_queue(queue)
         secret = load_gateway_secret() or load_secret() or ""
         heartbeat_url = f"http://100.102.201.26:{os.environ.get('PORT', '8646')}/api/heartbeat"
         heartbeat_token = worker_liveness.make_heartbeat_token(secret, item_id)
@@ -1601,6 +1610,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             "sender": {"login": item.get("author", "unknown")},
             # Context fields at top-level so template can access {local_path} etc.
             "local_path": local_path,
+            "worktree": worktree,
+            "branch": branch,
             "prompt_id": prompt_id,
             "item_id": item_id,
             "heartbeat_url": heartbeat_url,
@@ -1640,8 +1651,6 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
             dispatch_id = telemetry.get("dispatch_id")
             session_id = telemetry.get("session_id")
             agent_pid = telemetry.get("pid")
-            branch = telemetry.get("branch") or f"fix/issue-{issue_number}"
-            worktree = telemetry.get("worktree") or f"/tmp/cwc-work-{issue_number}"
 
             # Track the dispatch. Gateway may not expose PID yet; diagnostics
             # below make that explicit for worker pool and API consumers.
@@ -1783,6 +1792,8 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
                 "method": "gateway_webhook",
                 "prompt": prompt_id,
                 "local_path": local_path,
+                "worktree": worktree,
+                "branch": branch,
                 "model_provider": model_provider,
                 "model": model_name,
                 "session_id": session_id,
