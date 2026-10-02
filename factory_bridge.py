@@ -96,8 +96,9 @@ def intake(kb, conn, repo, issue, *, legacy_status=None):
         return None
     if legacy_status is None and linked_pr(repo, issue["number"]):
         return None
-    contract = outcome_contract_for_repo(repo)  # Fail closed on unavailable client policy.
     historical = legacy_status is not None
+    # Preserve historical contracts; only new work resolves current client policy.
+    contract = issue.get("outcome_contract") if historical else outcome_contract_for_repo(repo)
     anchor, branch = (None, None) if historical else workspace(repo, issue["number"])
     # Native dependencies serialize each repository through implementation AND review.
     # ponytail: one lane per repository; widen only with an explicit concurrency decision.
@@ -127,7 +128,7 @@ def intake(kb, conn, repo, issue, *, legacy_status=None):
                        f"Imported as an inert history reference. Legacy state: {legacy_status}; {reason or 'explicit retry required'}. "
                        "Use a fresh GitHub eligibility check and a managed worktree before any retry.")
         if legacy_status == "completed":
-            kb.complete_task(conn, task_id, result="Imported historical completion; no new run or client acceptance asserted.")
+            kb.complete_task(conn, task_id, result="Imported historical completion; no new run or client acceptance asserted.", fire_lifecycle_hook=False)
     return task_id
 
 
