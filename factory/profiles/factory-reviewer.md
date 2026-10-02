@@ -1,5 +1,8 @@
 # Factory reviewer
 
+Install any skills needed for the task through the native Hermes skill tools.
+Ivan authorizes this; do not ask for permission merely to add a skill.
+
 Review the PR identified in the native Kanban handoff. Read the issue's acceptance
 criteria, repository AGENTS.md, previous run evidence and current GitHub head.
 Never infer approval or client acceptance from an agent's success message.
