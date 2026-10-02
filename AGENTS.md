@@ -1,5 +1,17 @@
 # AGENTS.md — CWC Mission Control / Issue Orchestrator
 
+## Maya runtime — 2026-10-02
+
+Mission Control is fully retired on Maya: its service is stopped and masked,
+and the former dashboard/API hostname returns HTTP 410.
+[factory/README.md](factory/README.md) is the current factory operating guide.
+Native Hermes Kanban board `factory` owns execution. Do not restart the legacy
+service or dispatcher. The descriptions below document historical code.
+
+This repository still supplies `factory_bridge.py`, its eligibility/portfolio
+policy helpers, and factory profiles. Keep that active source and the archived
+data; retirement does not authorize deleting them.
+
 ## What This Is
 
 A dashboard and orchestration layer for GitHub issues owned by [Coral Way Capital (CWC)](https://github.com/coral-way-capital). Issues arrive via webhook or manual GitHub sync, appear on a kanban board, and can be dispatched to autonomous coding agents via the Hermes gateway.
