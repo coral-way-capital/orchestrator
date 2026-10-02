@@ -66,8 +66,11 @@ eligibility, assigning a managed worktree and restoring a repository contract.
 ## Validation and rollback
 
 Run `python -m unittest -v test_factory test_dispatch_workspace test_workspace_prompts`.
-The prepared CI workflow checks admission/error behavior, authenticated HTTP
-cutover, and workspace isolation. Publishing it is pending CQ-001. On Maya's Hermes Python the same command also exercises real native
+Six focused checks pass on Maya, covering admission/error behavior, authenticated
+HTTP cutover, and workspace isolation. Ivan accepted this validation for the
+migration merge and Maya cutover on 2026-10-02 ([CQ-001](../docs/client-questions.md));
+GitHub CI was not run because the existing OAuth logins cannot publish workflows.
+On Maya's Hermes Python the same command also exercises real native
 SQLite deduplication, dependency ordering, review handoff and failed acceptance.
 A separate local-only canary verifies actual profile inference and handoff; it
 must never create a GitHub issue/PR, send a message or alter a client repository.
