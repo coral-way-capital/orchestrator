@@ -41,6 +41,9 @@ hermes -p factory cron list
 hermes -p factory chat
 ```
 
+Install the bundled `skills/devops/sdlc-review` in the reviewer profile: native
+review dispatch requires it even when profiles are created with `--no-skills`.
+
 The single existing gateway dispatches the allowlisted factory profiles and ticks
 their cron stores. No second gateway/daemon is needed. Profile histories and
 memories are separate; profiles share the OS account and provider credential
@@ -61,8 +64,8 @@ eligibility, assigning a managed worktree and restoring a repository contract.
 ## Validation and rollback
 
 Run `python -m unittest -v test_factory test_dispatch_workspace test_workspace_prompts`.
-CI checks admission/error behavior, authenticated HTTP cutover, and workspace
-isolation. On Maya's Hermes Python the same command also exercises real native
+The prepared CI workflow checks admission/error behavior, authenticated HTTP
+cutover, and workspace isolation. Publishing it is pending CQ-001. On Maya's Hermes Python the same command also exercises real native
 SQLite deduplication, dependency ordering, review handoff and failed acceptance.
 A separate local-only canary verifies actual profile inference and handoff; it
 must never create a GitHub issue/PR, send a message or alter a client repository.

@@ -11,7 +11,7 @@ Canonical decision inbox, following Ivan's client-question template. Valid state
 - Registered: 2026-10-02
 - Respondent: Ivan
 - Target date: 2026-10-02
-- Related work: native Hermes factory migration, branch `codex/native-hermes-factory-20261002`
+- Related work: [native Hermes factory migration PR #16](https://github.com/coral-way-capital/orchestrator/pull/16)
 - Blocks: migration PR merge and production cutover, not implementation or local/native validation
 
 GitHub rejected the prepared workflow because the existing Maya and local OAuth
