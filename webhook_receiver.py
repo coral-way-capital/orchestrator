@@ -384,6 +384,9 @@ def load_queue_json():
 class IssueWebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(self.path.split("?")[0])
+        if os.environ.get("CWC_FACTORY_BACKEND") == "kanban" and path.startswith("/api/"):
+            self._json_response({"error": "Mission Control is read-only; use Hermes Kanban board factory"}, 410)
+            return
         try:
             content_length = int(self.headers.get("Content-Length", 0))
         except (TypeError, ValueError):
@@ -739,6 +742,23 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
         event = self.headers.get("X-GitHub-Event", "")
         action = payload.get("action", "")
 
+        if os.environ.get("CWC_FACTORY_BACKEND") == "kanban" and event == "issues":
+            # Signature has been verified above. Hermes owns task state and execution.
+            runtime = Path.home() / ".hermes/hermes-agent/venv/bin/python"
+            env = {**os.environ, "HERMES_HOME": str(Path.home() / ".hermes/profiles/factory")}
+            try:
+                outcome = subprocess.run(
+                    [str(runtime), str(Path(__file__).with_name("factory_bridge.py")), "--webhook"],
+                    input=raw_body, capture_output=True, timeout=150, env=env,
+                )
+                if outcome.returncode:
+                    raise RuntimeError("intake failed")
+            except (OSError, subprocess.SubprocessError, RuntimeError):
+                self._json_response({"error": "Native intake unavailable; retry delivery"}, 503)
+                return
+            self._json_response({"ok": True, "backend": "hermes-kanban", "board": "factory"})
+            return
+
         if event in {"pull_request", "pull_request_review"}:
             try:
                 outcome = ingest_pr_webhook(
@@ -913,6 +933,12 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # Normalize path (strip query string for routing)
         path = unquote(self.path.split("?")[0])
+
+        if os.environ.get("CWC_FACTORY_BACKEND") == "kanban" and path in {
+            "/api/sync", "/api/health", "/api/agent-status",
+        }:
+            self._json_response({"error": "Mission Control is read-only; use Hermes Kanban board factory"}, 410)
+            return
 
         # API routes
         if path == "/api/dispatch-telemetry":
@@ -1825,6 +1851,9 @@ class IssueWebhookHandler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         """Handle prioritization: PATCH /api/queue/prioritize/<id> or PATCH /api/queue/move-down/<id>"""
         path = unquote(self.path.split("?")[0])
+        if os.environ.get("CWC_FACTORY_BACKEND") == "kanban":
+            self._json_response({"error": "Mission Control is read-only; use Hermes Kanban board factory"}, 410)
+            return
         if path == "/api/outcome-funnel":
             self.send_response(405)
             self.send_header("Allow", "GET")
