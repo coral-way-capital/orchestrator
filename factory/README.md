@@ -1,13 +1,16 @@
 # Maya software factory
 
 Decision, 2026-10-02: Ivan authorized dedicated Hermes profiles, native Kanban
-execution, and retiring Mission Control as the factory control plane.
+execution, and retiring Mission Control as the factory control plane. Ivan then
+authorized full Mission Control retirement, including its historical web UI and
+compatibility API.
 
 `factory` owns deterministic GitHub intake and factory maintenance. Native board
 `factory` owns claims, workspaces, retry history and implementer/reviewer handoff.
 `factory-implementer` opens a PR; `factory-reviewer` checks the exact head and
 requests changes or completes with evidence. PR Guardian retains merge authority.
-The old JSON queue and metrics remain historical records, not another live queue.
+The old JSON queue and metrics are archived historical records. The Mission
+Control service, dashboard, API and PR-outcome collector are no longer running.
 
 ## Admission and execution
 
@@ -23,8 +26,10 @@ The old JSON queue and metrics remain historical records, not another live queue
   review. Two native workers may run globally, one per profile. Intake creates
   dedicated repository anchors under `~/.hermes/factory/repos`; native worktrees
   use fresh branches fetched from the actual default branch. Retries reuse work.
-- Run limit: 90 minutes; automatic retry limit: one. Native crash/heartbeat
-  recovery owns execution. Long external waits belong in blocked/scheduled cards.
+- Run limit: 90 minutes. Native `max_retries=1` is a failure threshold: the first
+  failed attempt blocks the card for review; it does not grant an automatic retry.
+  Retry the existing card/worktree explicitly after resolving the cause. Native
+  crash/heartbeat recovery owns execution. Long waits belong in blocked/scheduled cards.
 - Code tasks use native repository completion contracts: required CI must pass
   on the exact PR head. A repository with no required checks remains blocked;
   configure an appropriate repository gate explicitly rather than weakening the
@@ -51,12 +56,28 @@ their cron stores. No second gateway/daemon is needed. Profile histories and
 memories are separate; profiles share the OS account and provider credential
 fallback, so they are not security sandboxes.
 
-Mission Control runs with `CWC_FACTORY_BACKEND=kanban`: signed issue intake is
-forwarded to Hermes; old dispatch, finish, heartbeat, sync, retry and reaping
-endpoints return HTTP 410. Read-only history and PR outcome ingestion remain
-available for existing consumers. Its old dispatcher cron is paused. Existing
-disabled review webhooks stay disabled; legacy issue/decomposer routes become
-script-only native intake. Thus there is one active execution queue.
+Mission Control is fully retired on Maya. `cwc-issue-webhook.service` is stopped,
+masked and removed from boot startup; port 8646 has no listener. The former
+`orchestrator.coralwaycapital.com` dashboard/API hostname returns HTTP 410.
+The old default-profile dispatcher, cleaner and Guardian cron definitions were
+removed after their factory-profile replacements became active. The legacy
+dispatcher script and service files were privately archived.
+
+Native Hermes issue/decomposer webhook routes remain script-only intake, and the
+two-minute GitHub sync covers issue admission independently of legacy hooks.
+Existing disabled review routes stay disabled. Legacy PR-outcome collection has
+stopped; its database is history, not live telemetry. No native browser dashboard
+has been installed; use the native CLI/board.
+
+Weekly Company Scorecard and Weekly Portfolio Review now use the existing
+versioned portfolio manifest and their other approved sources. They no longer
+query the retired API. The company collector already supports this mode and
+reports its Mission Control source as `not provided`; no business outcome is
+inferred from engineering activity.
+
+The checkout at `~/.hermes/issue-queue` remains the source location for the active
+`factory_bridge.py`, eligibility and portfolio policy modules. Keep it and its
+historical data; no Mission Control server is needed by those script imports.
 
 Historical pending/failed cards import blocked, completed cards import done.
 Imports never start an agent, assert new validation, or acquire repository lanes.
@@ -75,8 +96,15 @@ SQLite deduplication, dependency ordering, review handoff and failed acceptance.
 A separate local-only canary verifies actual profile inference and handoff; it
 must never create a GitHub issue/PR, send a message or alter a client repository.
 
-Before cutover, privately back up config, subscriptions, cron records and the
-legacy queue/database snapshots. Drain legacy workers and import once. Keep
-those snapshots on Maya, never in Git. To roll back, pause native intake and
-drain native workers first; only then remove the backend environment flag and
-restore the old route/cron configuration. Never run both dispatchers together.
+Retirement was verified on Maya: masked/inactive service, closed legacy port,
+HTTP 410 for the old HTTPS dashboard and API, healthy native gateway, and a
+manifest-only scorecard rendered privately without vault writes or delivery.
+The existing six focused tests and native profile canaries validated migration;
+retirement itself changes deployment configuration and report instructions.
+
+Private migration snapshots are under `~/.hermes/backups/factory-native-20261002/`;
+full-retirement snapshots are under `~/.hermes/backups/mission-control-retired-20261002/`.
+They include private service/config data and must never enter Git or the vault.
+Restoration requires explicit operator intent: pause intake and drain native
+workers, then selectively restore the retired service/routes/jobs. Preserve
+unrelated proxy changes and never run both dispatchers together.
